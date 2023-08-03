@@ -1,11 +1,56 @@
 ﻿namespace NLitecoin.MimbleWimble
 
-open NBitcoin
+open System.IO
 
+open NBitcoin
+open Org.BouncyCastle.Crypto.Digests
+open Org.BouncyCastle.Crypto.Parameters
+
+type ISerializeable =
+    abstract Write: Stream -> unit
+    // no Read() method as it will be static method and can't be included in interface
 
 type BlindingFactor = BlindindgFactor of uint256
 
 type Hash = Hash of uint256
+
+module internal HashTags =
+    let ADDRESS = 'A'
+    let BLIND = 'B'
+    let DERIVE = 'D'
+    let NONCE = 'N'
+    let OUT_KEY = 'O'
+    let SEND_KEY = 'S'
+    let TAG = 'T'
+    let NONCE_MASK = 'X'
+    let VALUE_MASK = 'Y'
+
+type Hasher(?hashTag: char) =
+    let blake3 = Blake3Digest()
+    do
+        blake3.Init(Blake3Parameters())
+        match hashTag with
+        | Some tag -> blake3.Update(byte tag)
+        | None -> ()
+
+    member _.Write(bytes: array<uint8>) =
+        blake3.BlockUpdate(bytes, 0, bytes.Length)
+
+    member self.Append(object: ISerializeable) =
+        use stream = new MemoryStream()
+        object.Write stream
+        self.Write(stream.ToArray())
+
+    member _.Hash() =
+        let length = 32
+        let bytes = Array.zeroCreate length
+        blake3.OutputFinal(bytes, 0, length) |> ignore
+        Hash(uint256 bytes)
+
+    static member CalculateHash(object: ISerializeable) =
+        let hasher = Hasher()
+        hasher.Append object
+        hasher.Hash()
 
 // 33 bytes
 type PedersenCommitment = PedersenCommitment of bigint
@@ -34,8 +79,6 @@ type Input =
         ExtraData: array<uint8>
         Signature: Signature
     }
-    member self.Hash: Hash =
-        raise <| System.NotImplementedException()
 
 type OutputMessage =
     {
@@ -47,8 +90,6 @@ type OutputMessage =
         MaskedNonce: bigint
         ExtraData: array<uint8>
     }
-    member self.Hash: Hash =
-        raise <| System.NotImplementedException()
 
 type RangeProof(bytes: array<uint8>) =
     do assert(bytes.Length <= 675)
@@ -67,8 +108,6 @@ type Output =
         RangeProof: RangeProof
         Signature: Signature
     }
-    member self.Hash: Hash =
-        raise <| System.NotImplementedException()
 
 type KernelFeatures =
     | FEE_FEATURE_BIT = 0x01
@@ -110,8 +149,6 @@ type Kernel =
         // The signature proving the excess is a valid public key, which signs the transaction fee.
         Signature: Signature
     }
-    member self.Hash: Hash =
-        raise <| System.NotImplementedException()
 
 /// TRANSACTION BODY - Container for all inputs, outputs, and kernels in a transaction or block.
 type TxBody =
@@ -132,5 +169,3 @@ type Transaction =
         // The transaction body.
         Body: TxBody
     }
-    member self.Hash: Hash =
-        raise <| System.NotImplementedException()
