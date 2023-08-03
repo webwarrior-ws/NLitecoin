@@ -7,12 +7,32 @@ open Org.BouncyCastle.Crypto.Digests
 open Org.BouncyCastle.Crypto.Parameters
 
 type ISerializeable =
-    abstract Write: Stream -> unit
+    abstract Write: BinaryWriter -> unit
     // no Read() method as it will be static method and can't be included in interface
 
 type BlindingFactor = BlindindgFactor of uint256
+    with
+        interface ISerializeable with
+            member self.Write(stream) =
+                match self with
+                | BlindindgFactor number -> 
+                    let bytes = number.ToBytes()
+                    stream.Write(bytes, 0, bytes.Length)
+        
+        static member Read(stream: BinaryReader) =
+            stream.ReadBytes 32 |> uint256 |> BlindindgFactor
 
 type Hash = Hash of uint256
+    with
+        interface ISerializeable with
+            member self.Write(stream) =
+                match self with
+                | Hash number -> 
+                    let bytes = number.ToBytes()
+                    stream.Write(bytes, 0, bytes.Length)
+        
+        static member Read(stream: BinaryReader) =
+            stream.ReadBytes 32 |> uint256 |> Hash
 
 module internal HashTags =
     let ADDRESS = 'A'
@@ -38,7 +58,8 @@ type Hasher(?hashTag: char) =
 
     member self.Append(object: ISerializeable) =
         use stream = new MemoryStream()
-        object.Write stream
+        use writer = new BinaryWriter(stream)
+        object.Write writer
         self.Write(stream.ToArray())
 
     member _.Hash() =
@@ -52,14 +73,53 @@ type Hasher(?hashTag: char) =
         hasher.Append object
         hasher.Hash()
 
-// 33 bytes
 type PedersenCommitment = PedersenCommitment of bigint
+    with
+        static member NumBytes = 33
 
-// 33 bytes
+        static member Read(stream: BinaryReader) =
+            stream.ReadBytes PedersenCommitment.NumBytes |> bigint |> PedersenCommitment
+
+        interface ISerializeable with
+            member self.Write(stream) =
+                match self with
+                | PedersenCommitment number -> 
+                    let bytes = number.ToByteArray()
+                    for i=0 to PedersenCommitment.NumBytes-bytes.Length do // ?
+                        stream.Write 0uy
+                    stream.Write(bytes, 0, bytes.Length)
+
 type PublicKey = PublicKey of bigint
+    with
+        static member NumBytes = 33
 
-// 64 bytes
+        static member Read(stream: BinaryReader) =
+            stream.ReadBytes PedersenCommitment.NumBytes |> bigint |> PublicKey
+
+        interface ISerializeable with
+            member self.Write(stream) =
+                match self with
+                | PublicKey number -> 
+                    let bytes = number.ToByteArray()
+                    for i=0 to PublicKey.NumBytes-bytes.Length do // ?
+                        stream.Write 0uy
+                    stream.Write(bytes, 0, bytes.Length)
+
 type Signature = Signature of bigint
+    with
+        static member NumBytes = 64
+
+        static member Read(stream: BinaryReader) =
+            stream.ReadBytes PedersenCommitment.NumBytes |> bigint |> Signature
+
+        interface ISerializeable with
+            member self.Write(stream) =
+                match self with
+                | Signature number -> 
+                    let bytes = number.ToByteArray()
+                    for i=0 to Signature.NumBytes-bytes.Length do // ?
+                        stream.Write 0uy
+                    stream.Write(bytes, 0, bytes.Length)
 
 type InputFeatures =
     | STEALTH_KEY_FEATURE_BIT = 0x01
@@ -74,30 +134,111 @@ type Input =
         Features: InputFeatures
         OutputID: Hash
         Commitment: PedersenCommitment
-        InputPubKey: Option<PublicKey>
+        InputPublicKey: Option<PublicKey>
         OutputPublicKey: PublicKey
         ExtraData: array<uint8>
         Signature: Signature
+    }
+    static member Read(stream: BinaryReader) : Input =
+        let features = stream.ReadByte() |> int |> enum<InputFeatures>
+        let outputId = Hash.Read stream
+        let commitment = PedersenCommitment.Read stream
+        let outputPubKey = PublicKey.Read stream
+
+        let inputPubKey =
+            if int(features &&& InputFeatures.STEALTH_KEY_FEATURE_BIT) <> 0 then
+                Some <| PublicKey.Read stream
+            else
+                None
+
+        let extraData =
+            if int(features &&& InputFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
+                // how to read array?
+                raise <| System.NotImplementedException()
+            else
+                Array.empty
+
+        let signature = Signature.Read stream
+
+        let result = 
+            {
+                Features = features
+                OutputID = outputId
+                Commitment = commitment
+                OutputPublicKey = outputPubKey
+                InputPublicKey = inputPubKey
+                ExtraData = extraData
+                Signature = signature
+            }
+
+        let hash = Hash.Read stream
+
+        if hash <> Hasher.CalculateHash result then
+            failwith "wrong hash"
+
+        result
+
+    interface ISerializeable with
+        member self.Write(stream) = raise <| System.NotImplementedException()
+
+type OutputMessageStandardFields =
+    {
+        KeyExchangePubkey: PublicKey
+        ViewTag: uint8
+        MaskedValue: uint64
+        /// 16 bytes
+        MaskedNonce: bigint
     }
 
 type OutputMessage =
     {
         Features: OutputFeatures
-        KeyExchangePubkey: PublicKey
-        ViewTag: uint8
-        MaskedValue: uint64
-        // 16 bytes
-        MaskedNonce: bigint
+        StandardFields: Option<OutputMessageStandardFields>
         ExtraData: array<uint8>
     }
+    static member Read(stream: BinaryReader) : OutputMessage =
+        let features = stream.ReadByte() |> int |> enum<OutputFeatures>
+        
+        let standardFields =
+            if int(features &&& OutputFeatures.STANDARD_FIELDS_FEATURE_BIT) <> 0 then
+                {
+                    KeyExchangePubkey = PublicKey.Read stream
+                    ViewTag = stream.ReadByte()
+                    MaskedValue = stream.ReadUInt64()
+                    MaskedNonce = stream.ReadBytes 16 |> bigint
+                }
+                |> Some
+            else
+                None
+
+        let extraData =
+            if int(features &&& OutputFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
+                // how to read array?
+                raise <| System.NotImplementedException()
+            else
+                Array.empty
+
+        let result = 
+            {
+                Features = features
+                StandardFields = standardFields
+                ExtraData = extraData
+            }
+
+        let hash = Hash.Read stream
+
+        if hash <> Hasher.CalculateHash result then
+            failwith "wrong hash"
+
+        result
+
+    interface ISerializeable with
+        member self.Write(stream) = raise <| System.NotImplementedException()
 
 type RangeProof(bytes: array<uint8>) =
     do assert(bytes.Length <= 675)
 
     member _.Data = bytes
-
-    member self.Hash: Hash =
-        raise <| System.NotImplementedException()
 
 type Output =
     {
