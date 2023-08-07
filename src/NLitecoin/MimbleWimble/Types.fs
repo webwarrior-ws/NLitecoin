@@ -10,29 +10,29 @@ type ISerializeable =
     abstract Write: BinaryWriter -> unit
     // no Read() method as it will be static method and can't be included in interface
 
-type BlindingFactor = BlindindgFactor of uint256
-    with
-        interface ISerializeable with
-            member self.Write(stream) =
-                match self with
-                | BlindindgFactor number -> 
-                    let bytes = number.ToBytes()
-                    stream.Write(bytes, 0, bytes.Length)
+type BlindingFactor = 
+    | BlindindgFactor of uint256
+    interface ISerializeable with
+        member self.Write(stream) =
+            match self with
+            | BlindindgFactor number -> 
+                let bytes = number.ToBytes()
+                stream.Write(bytes, 0, bytes.Length)
         
-        static member Read(stream: BinaryReader) =
-            stream.ReadBytes 32 |> uint256 |> BlindindgFactor
+    static member Read(stream: BinaryReader) =
+        stream.ReadBytes 32 |> uint256 |> BlindindgFactor
 
-type Hash = Hash of uint256
-    with
-        interface ISerializeable with
-            member self.Write(stream) =
-                match self with
-                | Hash number -> 
-                    let bytes = number.ToBytes()
-                    stream.Write(bytes, 0, bytes.Length)
+type Hash = 
+    | Hash of uint256
+    interface ISerializeable with
+        member self.Write(stream) =
+            match self with
+            | Hash number -> 
+                let bytes = number.ToBytes()
+                stream.Write(bytes, 0, bytes.Length)
         
-        static member Read(stream: BinaryReader) =
-            stream.ReadBytes 32 |> uint256 |> Hash
+    static member Read(stream: BinaryReader) =
+        stream.ReadBytes 32 |> uint256 |> Hash
 
 module internal HashTags =
     let ADDRESS = 'A'
@@ -73,53 +73,53 @@ type Hasher(?hashTag: char) =
         hasher.Append object
         hasher.Hash()
 
-type PedersenCommitment = PedersenCommitment of bigint
-    with
-        static member NumBytes = 33
+type PedersenCommitment = 
+    | PedersenCommitment of bigint
+    static member NumBytes = 33
 
-        static member Read(stream: BinaryReader) =
-            stream.ReadBytes PedersenCommitment.NumBytes |> bigint |> PedersenCommitment
+    static member Read(stream: BinaryReader) =
+        stream.ReadBytes PedersenCommitment.NumBytes |> bigint |> PedersenCommitment
 
-        interface ISerializeable with
-            member self.Write(stream) =
-                match self with
-                | PedersenCommitment number -> 
-                    let bytes = number.ToByteArray()
-                    for i=0 to PedersenCommitment.NumBytes-bytes.Length do // ?
-                        stream.Write 0uy
-                    stream.Write(bytes, 0, bytes.Length)
+    interface ISerializeable with
+        member self.Write(stream) =
+            match self with
+            | PedersenCommitment number -> 
+                let bytes = number.ToByteArray()
+                for i=0 to PedersenCommitment.NumBytes-bytes.Length do // ?
+                    stream.Write 0uy
+                stream.Write(bytes, 0, bytes.Length)
 
-type PublicKey = PublicKey of bigint
-    with
-        static member NumBytes = 33
+type PublicKey = 
+    | PublicKey of bigint
+    static member NumBytes = 33
 
-        static member Read(stream: BinaryReader) =
-            stream.ReadBytes PedersenCommitment.NumBytes |> bigint |> PublicKey
+    static member Read(stream: BinaryReader) =
+        stream.ReadBytes PedersenCommitment.NumBytes |> bigint |> PublicKey
 
-        interface ISerializeable with
-            member self.Write(stream) =
-                match self with
-                | PublicKey number -> 
-                    let bytes = number.ToByteArray()
-                    for i=0 to PublicKey.NumBytes-bytes.Length do // ?
-                        stream.Write 0uy
-                    stream.Write(bytes, 0, bytes.Length)
+    interface ISerializeable with
+        member self.Write(stream) =
+            match self with
+            | PublicKey number -> 
+                let bytes = number.ToByteArray()
+                for i=0 to PublicKey.NumBytes-bytes.Length do // ?
+                    stream.Write 0uy
+                stream.Write(bytes, 0, bytes.Length)
 
-type Signature = Signature of bigint
-    with
-        static member NumBytes = 64
+type Signature = 
+    | Signature of bigint
+    static member NumBytes = 64
 
-        static member Read(stream: BinaryReader) =
-            stream.ReadBytes PedersenCommitment.NumBytes |> bigint |> Signature
+    static member Read(stream: BinaryReader) =
+        stream.ReadBytes PedersenCommitment.NumBytes |> bigint |> Signature
 
-        interface ISerializeable with
-            member self.Write(stream) =
-                match self with
-                | Signature number -> 
-                    let bytes = number.ToByteArray()
-                    for i=0 to Signature.NumBytes-bytes.Length do // ?
-                        stream.Write 0uy
-                    stream.Write(bytes, 0, bytes.Length)
+    interface ISerializeable with
+        member self.Write(stream) =
+            match self with
+            | Signature number -> 
+                let bytes = number.ToByteArray()
+                for i=0 to Signature.NumBytes-bytes.Length do // ?
+                    stream.Write 0uy
+                stream.Write(bytes, 0, bytes.Length)
 
 type InputFeatures =
     | STEALTH_KEY_FEATURE_BIT = 0x01
