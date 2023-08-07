@@ -240,6 +240,12 @@ type RangeProof(bytes: array<uint8>) =
 
     member _.Data = bytes
 
+    static member Read(stream: BinaryReader) : RangeProof =
+        failwith "how to read arrays?"
+
+    interface ISerializeable with
+        member self.Write(stream) = raise <| System.NotImplementedException()
+
 type Output =
     {
         Commitment: PedersenCommitment
@@ -249,6 +255,11 @@ type Output =
         RangeProof: RangeProof
         Signature: Signature
     }
+    static member Read(stream: BinaryReader) : Output =
+        raise <| System.NotImplementedException()
+
+    interface ISerializeable with
+        member self.Write(stream) = raise <| System.NotImplementedException()
 
 type KernelFeatures =
     | FEE_FEATURE_BIT = 0x01
@@ -274,6 +285,11 @@ type PegOutCoin =
         Amount: CAmount
         ScriptPubKey: NBitcoin.Script // ?
     }
+    static member Read(stream: BinaryReader) : PegOutCoin =
+        raise <| System.NotImplementedException()
+
+    interface ISerializeable with
+        member self.Write(stream) = raise <| System.NotImplementedException()
 
 type Kernel =
     {
@@ -290,6 +306,11 @@ type Kernel =
         // The signature proving the excess is a valid public key, which signs the transaction fee.
         Signature: Signature
     }
+    static member Read(stream: BinaryReader) : Kernel =
+        raise <| System.NotImplementedException()
+
+    interface ISerializeable with
+        member self.Write(stream) = raise <| System.NotImplementedException()
 
 /// TRANSACTION BODY - Container for all inputs, outputs, and kernels in a transaction or block.
 type TxBody =
@@ -301,6 +322,11 @@ type TxBody =
         /// List of kernels that make up this transaction.
         Kernels: array<Kernel>
     }
+    static member Read(stream: BinaryReader) : TxBody =
+        raise <| System.NotImplementedException()
+
+    interface ISerializeable with
+        member self.Write(stream) = raise <| System.NotImplementedException()
 
 type Transaction =
     {
@@ -310,3 +336,15 @@ type Transaction =
         // The transaction body.
         Body: TxBody
     }
+    static member ParseString(txString: string) : Transaction =
+        let encoder = NBitcoin.DataEncoders.HexEncoder()
+        let binaryTx = encoder.DecodeData txString
+        use stream = new MemoryStream(binaryTx)
+        use reader = new BinaryReader(stream)
+        Transaction.Read reader
+
+    static member Read(stream: BinaryReader) : Transaction =
+        raise <| System.NotImplementedException()
+
+    interface ISerializeable with
+        member self.Write(stream) = raise <| System.NotImplementedException()
