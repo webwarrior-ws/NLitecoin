@@ -3,12 +3,15 @@
 open System.IO
 
 open NBitcoin
+open NBitcoin.Protocol
 open Org.BouncyCastle.Crypto.Digests
 open Org.BouncyCastle.Crypto.Parameters
 
 type ISerializeable =
     abstract Write: BitcoinStream -> unit
     // no Read() method as it will be static method and can't be included in interface
+
+type CAmount = int64
 
 [<AutoOpen>]
 module Helpers =
@@ -43,34 +46,40 @@ module Helpers =
         bigint result.Value
 
     let readArray<'T> (stream: BitcoinStream) (readFunc : BitcoinStream -> 'T) : array<'T> =
-        let len = int <| NBitcoin.Protocol.VarInt.StaticRead stream
+        let len = int <| VarInt.StaticRead stream
         Array.init len (fun _ -> readFunc stream)
 
     let writeArray<'T when 'T :> ISerializeable> (stream: BitcoinStream) (arr: array<'T>) =
         let len = uint64 arr.Length
-        NBitcoin.Protocol.VarInt.StaticWrite(stream, len)
+        VarInt.StaticWrite(stream, len)
         for each in arr do
             each.Write stream
 
+    let readCAmount (stream: BitcoinStream) : CAmount =
+        let amountRef = ref 0L
+        stream.ReadWrite amountRef
+        amountRef.Value
+
 type BlindingFactor = 
     | BlindindgFactor of uint256
+    static member Read(stream: BitcoinStream) : BlindingFactor =
+        BlindindgFactor(readUint256 stream)
+
     interface ISerializeable with
         member self.Write(stream) =
             match self with
             | BlindindgFactor number -> number |> writeUint256 stream
-        
-    static member Read(stream: BitcoinStream) : BlindingFactor =
-        BlindindgFactor(readUint256 stream)
+
 
 type Hash = 
     | Hash of uint256
+    static member Read(stream: BitcoinStream) : Hash =
+        readUint256 stream |> Hash
+
     interface ISerializeable with
         member self.Write(stream) =
             match self with
             | Hash number -> number |> writeUint256 stream
-        
-    static member Read(stream: BitcoinStream) : Hash =
-        readUint256 stream |> Hash
 
 module internal HashTags =
     let ADDRESS = 'A'
@@ -182,8 +191,9 @@ type Input =
 
         let extraData =
             if int(features &&& InputFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
-                // how to read array?
-                raise <| System.NotImplementedException()
+                let bytes = ref Array.empty<byte>
+                stream.ReadWrite bytes
+                bytes.Value
             else
                 Array.empty
 
@@ -304,7 +314,15 @@ type Output =
         Signature: Signature
     }
     static member Read(stream: BitcoinStream) : Output =
-        raise <| System.NotImplementedException()
+        assert(not stream.Serializing)
+        {
+            Commitment = PedersenCommitment.Read stream
+            SenderPublicKey = PublicKey.Read stream
+            ReceiverPublicKey = PublicKey.Read stream
+            Message = OutputMessage.Read stream
+            RangeProof = RangeProof.Read stream
+            Signature = Signature.Read stream
+        }
 
     interface ISerializeable with
         member self.Write(stream) = raise <| System.NotImplementedException()
@@ -326,15 +344,20 @@ module KernelFeatures =
         KernelFeatures.STEALTH_EXCESS_FEATURE_BIT ||| 
         KernelFeatures.EXTRA_DATA_FEATURE_BIT
 
-type CAmount = int64
-
 type PegOutCoin =
     {
         Amount: CAmount
         ScriptPubKey: NBitcoin.Script // ?
     }
-    static member Read(stream: BinaryReader) : PegOutCoin =
-        raise <| System.NotImplementedException()
+    static member Read(stream: BitcoinStream) : PegOutCoin =
+        assert(not stream.Serializing)
+        let amount = readCAmount stream
+        let scriptPubKeyRef = ref NBitcoin.Script.Empty
+        stream.ReadWrite scriptPubKeyRef
+        {
+            Amount = amount
+            ScriptPubKey = scriptPubKeyRef.Value
+        }
 
     interface ISerializeable with
         member self.Write(stream) = raise <| System.NotImplementedException()
@@ -355,7 +378,63 @@ type Kernel =
         Signature: Signature
     }
     static member Read(stream: BitcoinStream) : Kernel =
-        raise <| System.NotImplementedException()
+        assert(not stream.Serializing)
+        let featuresRef = ref 0uy
+        stream.ReadWrite featuresRef
+        let features = featuresRef.Value |> int |> enum<KernelFeatures>
+
+        let fee =
+            if int(features &&& KernelFeatures.FEE_FEATURE_BIT) <> 0 then
+                Some <| readCAmount stream
+            else
+                None
+
+        let pegin =
+            if int(features &&& KernelFeatures.PEGIN_FEATURE_BIT) <> 0 then
+                Some <| readCAmount stream
+            else
+                None
+
+        let pegouts =
+            if int(features &&& KernelFeatures.PEGOUT_FEATURE_BIT) <> 0 then
+                readArray stream PegOutCoin.Read
+            else
+                Array.empty
+
+        let lockHeight =
+            if int(features &&& KernelFeatures.HEIGHT_LOCK_FEATURE_BIT) <> 0 then
+                let valueRef = ref 0
+                stream.ReadWrite valueRef
+                Some valueRef.Value
+            else
+                None
+
+        let stealthExcess =
+            if int(features &&& KernelFeatures.STEALTH_EXCESS_FEATURE_BIT) <> 0 then
+                Some <| PublicKey.Read stream
+            else
+                None
+        
+        let extraData =
+            let bytesRef = ref Array.empty<byte>
+            if int(features &&& KernelFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
+                stream.ReadWrite bytesRef
+            bytesRef.Value
+
+        let excess = PedersenCommitment.Read stream
+        let signature = Signature.Read stream
+
+        {
+            Features = features
+            Fee = fee
+            Pegin = pegin
+            Pegouts = pegouts
+            LockHeight = lockHeight
+            StealthExcess = stealthExcess
+            ExtraData = extraData
+            Excess = excess
+            Signature = signature
+        }
 
     interface ISerializeable with
         member self.Write(stream) = raise <| System.NotImplementedException()
@@ -394,8 +473,9 @@ type Transaction =
     static member ParseString(txString: string) : Transaction =
         let encoder = NBitcoin.DataEncoders.HexEncoder()
         let binaryTx = encoder.DecodeData txString
-        let reader = new BitcoinStream(binaryTx)
-        Transaction.Read reader
+        use memoryStream = new MemoryStream(binaryTx)
+        let bitcoinStream = new BitcoinStream(memoryStream, false)
+        Transaction.Read bitcoinStream
 
     static member Read(stream: BitcoinStream) : Transaction =
         let result =
