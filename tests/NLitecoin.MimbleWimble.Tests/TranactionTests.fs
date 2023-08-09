@@ -1,4 +1,4 @@
-module NLitecoin.MimbleWimble.Tests
+module NLitecoin.MimbleWimble.TransactionTests
 
 open System
 
