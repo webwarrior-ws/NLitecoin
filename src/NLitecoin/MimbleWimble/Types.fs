@@ -1,5 +1,6 @@
 ﻿namespace NLitecoin.MimbleWimble
 
+open System
 open System.IO
 
 open NBitcoin
@@ -28,23 +29,7 @@ module Helpers =
         let tempValue = uint256.MutableUint256()
         tempValue.ReadWrite stream
         tempValue.Value
-
-    let writeBigInt (stream: BitcoinStream) (number: bigint) (numBytes: int) =
-        assert(stream.Serializing)
-        let bytes = number.ToByteArray()
-        if bytes.Length < numBytes then
-            stream.ReadWrite (Array.append (Array.zeroCreate numBytes) bytes |> ref)
-        elif bytes.Length > numBytes then
-            failwithf "Requested to write %d bytes, but number has %d bytes" numBytes bytes.Length
-        else
-            stream.ReadWrite (bytes |> ref)
-
-    let readBigInt (stream: BitcoinStream) (numBytes: int) : bigint =
-        assert(not stream.Serializing)
-        let result : ref<array<uint8>> = Array.zeroCreate numBytes |> ref
-        stream.ReadWrite result
-        bigint result.Value
-
+    
     let readArray<'T> (stream: BitcoinStream) (readFunc : BitcoinStream -> 'T) : array<'T> =
         let len = int <| VarInt.StaticRead stream
         Array.init len (fun _ -> readFunc stream)
@@ -69,7 +54,6 @@ type BlindingFactor =
         member self.Write(stream) =
             match self with
             | BlindindgFactor number -> number |> writeUint256 stream
-
 
 type Hash = 
     | Hash of uint256
@@ -120,41 +104,72 @@ type Hasher(?hashTag: char) =
         hasher.Append object
         hasher.Hash()
 
+type BigInt(bytes: array<byte>) =
+    member _.Data = bytes
+
+    interface IEquatable<BigInt> with
+        override self.Equals other = self.Data = other.Data
+    
+    override self.Equals other = 
+        match other with
+        | :? BigInt as otherBigInt -> self.Data = otherBigInt.Data
+        | _ -> false
+
+    override self.GetHashCode() = self.Data.GetHashCode()
+
+    interface IComparable with
+        override self.CompareTo other = 
+            match other with
+            | :? BigInt as otherBigInt -> 
+                compare self.Data otherBigInt.Data
+            | _ -> failwith "Other is not BigInt"
+
+    static member Read(stream: BitcoinStream) (numBytes: int) : BigInt =
+        assert(not stream.Serializing)
+        let result : ref<array<uint8>> = Array.zeroCreate numBytes |> ref
+        stream.ReadWrite result
+        BigInt result.Value
+
+    interface ISerializeable with
+        member self.Write(stream) =
+            assert(stream.Serializing)
+            stream.ReadWrite (self.Data |> ref)
+
 type PedersenCommitment = 
-    | PedersenCommitment of bigint
+    | PedersenCommitment of BigInt
     static member NumBytes = 33
 
     static member Read(stream: BitcoinStream) =
-        PedersenCommitment(readBigInt stream PedersenCommitment.NumBytes)
+        PedersenCommitment(BigInt.Read stream PedersenCommitment.NumBytes)
 
     interface ISerializeable with
         member self.Write(stream) =
             match self with
-            | PedersenCommitment number -> writeBigInt stream number PedersenCommitment.NumBytes
+            | PedersenCommitment number -> (number :> ISerializeable).Write stream
 
 type PublicKey = 
-    | PublicKey of bigint
+    | PublicKey of BigInt
     static member NumBytes = 33
 
     static member Read(stream: BitcoinStream) =
-        PublicKey(readBigInt stream PublicKey.NumBytes)
+        PublicKey(BigInt.Read stream PublicKey.NumBytes)
 
     interface ISerializeable with
         member self.Write(stream) =
             match self with
-            | PublicKey number -> writeBigInt stream number PublicKey.NumBytes
+            | PublicKey number -> (number :> ISerializeable).Write stream
 
 type Signature = 
-    | Signature of bigint
+    | Signature of BigInt
     static member NumBytes = 64
 
     static member Read(stream: BitcoinStream) =
-        Signature(readBigInt stream Signature.NumBytes)
+        Signature(BigInt.Read stream Signature.NumBytes)
 
     interface ISerializeable with
         member self.Write(stream) =
             match self with
-            | Signature number -> writeBigInt stream number Signature.NumBytes
+            | Signature number -> (number :> ISerializeable).Write stream
 
 type InputFeatures =
     | STEALTH_KEY_FEATURE_BIT = 0x01
@@ -220,7 +235,7 @@ type OutputMessageStandardFields =
         KeyExchangePubkey: PublicKey
         ViewTag: uint8
         MaskedValue: uint64
-        MaskedNonce: bigint
+        MaskedNonce: BigInt
     }
     static member MaskedNonceNumBytes = 16
 
@@ -244,7 +259,7 @@ type OutputMessage =
                 stream.ReadWrite viewTag
                 let maskedValue = ref 0UL
                 stream.ReadWrite maskedValue
-                let maskedNonce = readBigInt stream OutputMessageStandardFields.MaskedNonceNumBytes
+                let maskedNonce = BigInt.Read stream OutputMessageStandardFields.MaskedNonceNumBytes
                 {
                     KeyExchangePubkey = pubKey
                     ViewTag = viewTag.Value
@@ -283,7 +298,7 @@ type OutputMessage =
                 write stream fields.KeyExchangePubkey
                 stream.ReadWrite fields.ViewTag |> ignore
                 stream.ReadWrite fields.MaskedValue |> ignore
-                writeBigInt stream fields.MaskedNonce OutputMessageStandardFields.MaskedNonceNumBytes
+                (fields.MaskedNonce :> ISerializeable).Write stream
 
             if int(self.Features &&& OutputFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
                 stream.ReadWrite(ref self.ExtraData)
