@@ -466,10 +466,10 @@ type Kernel =
                 None
         
         let extraData =
-            let bytesRef = ref Array.empty<byte>
             if int(features &&& KernelFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
-                stream.ReadWrite bytesRef
-            bytesRef.Value
+                readByteArray stream
+            else
+                Array.empty
 
         let excess = PedersenCommitment.Read stream
         let signature = Signature.Read stream
@@ -509,7 +509,7 @@ type Kernel =
                 (self.StealthExcess.Value :> ISerializeable).Write stream
 
             if int(self.Features &&& KernelFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
-                stream.ReadWrite(ref self.ExtraData)
+                writeByteArray stream self.ExtraData
 
             (self.Excess :> ISerializeable).Write stream
             (self.Signature :> ISerializeable).Write stream
