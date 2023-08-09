@@ -40,6 +40,19 @@ module Helpers =
         for each in arr do
             each.Write stream
 
+    let readByteArray (stream: BitcoinStream) : array<byte> =
+        let refCell = ref 0uy
+        readArray 
+            stream 
+            (fun s -> 
+                s.ReadWrite refCell
+                refCell.Value)
+
+    let writeByteArray (stream: BitcoinStream) (arr: array<byte>) =
+        let len = uint64 arr.Length
+        VarInt.StaticWrite(stream, len)
+        stream.ReadWrite(ref arr)
+
     let readCAmount (stream: BitcoinStream) : CAmount =
         let amountRef = ref 0L
         stream.ReadWrite amountRef
@@ -124,6 +137,10 @@ type BigInt(bytes: array<byte>) =
                 compare self.Data otherBigInt.Data
             | _ -> failwith "Other is not BigInt"
 
+    override self.ToString() =
+        let encoder = NBitcoin.DataEncoders.HexEncoder()
+        sprintf "BigInt %s" (encoder.EncodeData bytes)
+
     static member Read(stream: BitcoinStream) (numBytes: int) : BigInt =
         assert(not stream.Serializing)
         let result : ref<array<uint8>> = Array.zeroCreate numBytes |> ref
@@ -206,9 +223,7 @@ type Input =
 
         let extraData =
             if int(features &&& InputFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
-                let bytes = ref Array.empty<byte>
-                stream.ReadWrite bytes
-                bytes.Value
+                readByteArray stream
             else
                 Array.empty
 
@@ -228,7 +243,22 @@ type Input =
         result
 
     interface ISerializeable with
-        member self.Write(stream) = raise <| System.NotImplementedException()
+        member self.Write(stream) = 
+            assert(stream.Serializing)
+
+            let featuresByte = ref (uint8 self.Features)
+            stream.ReadWrite featuresByte
+            write stream self.OutputID
+            write stream self.Commitment
+            write stream self.OutputPublicKey
+
+            if int(self.Features &&& InputFeatures.STEALTH_KEY_FEATURE_BIT) <> 0 then
+                write stream self.InputPublicKey.Value
+
+            if int(self.Features &&& InputFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
+                writeByteArray stream self.ExtraData
+
+            write stream self.Signature
 
 type OutputMessageStandardFields =
     {
@@ -272,20 +302,15 @@ type OutputMessage =
 
         let extraData =
             if int(features &&& OutputFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
-                let data = ref Array.empty<uint8>
-                stream.ReadWrite data
-                data.Value
+                readByteArray stream
             else
                 Array.empty
 
-        let result = 
-            {
-                Features = features
-                StandardFields = standardFields
-                ExtraData = extraData
-            }
-
-        result
+        {
+            Features = features
+            StandardFields = standardFields
+            ExtraData = extraData
+        }
 
     interface ISerializeable with
         member self.Write(stream) = 
@@ -301,23 +326,22 @@ type OutputMessage =
                 (fields.MaskedNonce :> ISerializeable).Write stream
 
             if int(self.Features &&& OutputFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
-                stream.ReadWrite(ref self.ExtraData)
+                writeByteArray stream self.ExtraData
 
-type RangeProof(bytes: array<uint8>) =
-    do assert(bytes.Length <= 675)
+type RangeProof =
+    | RangeProof of array<uint8>
 
-    member _.Data = bytes
+    static member MaxLength = 675
 
     static member Read(stream: BitcoinStream) : RangeProof =
         assert(not stream.Serializing)
-        let result = ref Array.empty<uint8>
-        stream.ReadWrite result
-        RangeProof result.Value
+        RangeProof(readByteArray stream)
 
     interface ISerializeable with
         member self.Write(stream) = 
-            assert(not stream.Serializing)
-            stream.ReadWrite(ref bytes)
+            assert(stream.Serializing)
+            match self with
+            | RangeProof bytes -> writeByteArray stream bytes
 
 type Output =
     {
@@ -340,7 +364,15 @@ type Output =
         }
 
     interface ISerializeable with
-        member self.Write(stream) = raise <| System.NotImplementedException()
+        member self.Write(stream) = 
+            assert(stream.Serializing)
+
+            write stream self.Commitment
+            write stream self.SenderPublicKey
+            write stream self.ReceiverPublicKey
+            write stream self.Message
+            write stream self.RangeProof
+            write stream self.Signature
 
 type KernelFeatures =
     | FEE_FEATURE_BIT = 0x01
@@ -375,7 +407,10 @@ type PegOutCoin =
         }
 
     interface ISerializeable with
-        member self.Write(stream) = raise <| System.NotImplementedException()
+        member self.Write(stream) = 
+            assert(stream.Serializing)
+            stream.ReadWrite self.Amount |> ignore
+            stream.ReadWrite self.ScriptPubKey |> ignore
 
 type Kernel =
     {
@@ -452,7 +487,32 @@ type Kernel =
         }
 
     interface ISerializeable with
-        member self.Write(stream) = raise <| System.NotImplementedException()
+        member self.Write(stream) = 
+            assert(stream.Serializing)
+
+            let featuresRef = self.Features |> uint8 |> ref
+            stream.ReadWrite featuresRef
+
+            if int(self.Features &&& KernelFeatures.FEE_FEATURE_BIT) <> 0 then
+                stream.ReadWrite self.Fee.Value |> ignore
+
+            if int(self.Features &&& KernelFeatures.PEGIN_FEATURE_BIT) <> 0 then
+                stream.ReadWrite self.Pegin.Value |> ignore
+
+            if int(self.Features &&& KernelFeatures.PEGOUT_FEATURE_BIT) <> 0 then
+                writeArray stream self.Pegouts
+            
+            if int(self.Features &&& KernelFeatures.HEIGHT_LOCK_FEATURE_BIT) <> 0 then
+                stream.ReadWrite self.LockHeight.Value |> ignore
+
+            if int(self.Features &&& KernelFeatures.STEALTH_EXCESS_FEATURE_BIT) <> 0 then
+                (self.StealthExcess.Value :> ISerializeable).Write stream
+
+            if int(self.Features &&& KernelFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
+                stream.ReadWrite(ref self.ExtraData)
+
+            (self.Excess :> ISerializeable).Write stream
+            (self.Signature :> ISerializeable).Write stream
 
 /// TRANSACTION BODY - Container for all inputs, outputs, and kernels in a transaction or block.
 type TxBody =
