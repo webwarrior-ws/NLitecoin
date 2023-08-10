@@ -54,10 +54,12 @@ module Helpers =
         stream.ReadWrite(ref arr)
 
     let readCAmount (stream: BitcoinStream) : CAmount =
-        VarInt.StaticRead(stream) |> int64
+        let amountRef = ref 0UL
+        stream.ReadWriteAsCompactVarInt amountRef
+        amountRef.Value |> int64
 
     let writeCAmount (stream: BitcoinStream) (amount: CAmount) =
-        VarInt.StaticWrite(stream, uint64 amount)
+        stream.ReadWriteAsCompactVarInt(amount |> uint64 |> ref)
 
 type BlindingFactor = 
     | BlindindgFactor of uint256
