@@ -45,6 +45,7 @@ let ParsePegInTransaction () =
     ],
     *)
 
-    let transaction = Transaction.ParseString rawTransaction
+    let mimbleRawWimbleTransaction = rawTransaction[Transaction.RegularLTCPeginTranasctionSize *  2 ..]
+    let transaction = Transaction.ParseString mimbleRawWimbleTransaction
 
     ()

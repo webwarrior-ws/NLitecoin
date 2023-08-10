@@ -550,6 +550,10 @@ type Transaction =
         // The transaction body.
         Body: TxBody
     }
+    /// see https://github.com/litecoin-project/lips/blob/master/lip-0003.mediawiki#user-content-PegIn_Transactions
+    static member RegularLTCPeginTranasctionSize = 200
+
+    /// Parse hex-encoded MimbleWimble transaction
     static member ParseString(txString: string) : Transaction =
         let encoder = NBitcoin.DataEncoders.HexEncoder()
         let binaryTx = encoder.DecodeData txString
