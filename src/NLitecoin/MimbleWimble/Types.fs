@@ -54,9 +54,10 @@ module Helpers =
         stream.ReadWrite(ref arr)
 
     let readCAmount (stream: BitcoinStream) : CAmount =
-        let amountRef = ref 0L
-        stream.ReadWrite amountRef
-        amountRef.Value
+        VarInt.StaticRead(stream) |> int64
+
+    let writeCAmount (stream: BitcoinStream) (amount: CAmount) =
+        VarInt.StaticWrite(stream, uint64 amount)
 
 type BlindingFactor = 
     | BlindindgFactor of uint256
@@ -331,17 +332,21 @@ type OutputMessage =
 type RangeProof =
     | RangeProof of array<uint8>
 
-    static member MaxLength = 675
+    static member Size = 675
 
     static member Read(stream: BitcoinStream) : RangeProof =
         assert(not stream.Serializing)
-        RangeProof(readByteArray stream)
+        let bytes = Array.zeroCreate<byte> RangeProof.Size
+        stream.ReadWrite(ref bytes)
+        RangeProof bytes
 
     interface ISerializeable with
         member self.Write(stream) = 
             assert(stream.Serializing)
             match self with
-            | RangeProof bytes -> writeByteArray stream bytes
+            | RangeProof bytes -> 
+                assert(bytes.Length = RangeProof.Size)
+                stream.ReadWrite(ref bytes)
 
 type Output =
     {
@@ -409,7 +414,7 @@ type PegOutCoin =
     interface ISerializeable with
         member self.Write(stream) = 
             assert(stream.Serializing)
-            stream.ReadWrite self.Amount |> ignore
+            writeCAmount stream self.Amount
             stream.ReadWrite self.ScriptPubKey |> ignore
 
 type Kernel =
@@ -494,10 +499,10 @@ type Kernel =
             stream.ReadWrite featuresRef
 
             if int(self.Features &&& KernelFeatures.FEE_FEATURE_BIT) <> 0 then
-                stream.ReadWrite self.Fee.Value |> ignore
+                writeCAmount stream self.Fee.Value
 
             if int(self.Features &&& KernelFeatures.PEGIN_FEATURE_BIT) <> 0 then
-                stream.ReadWrite self.Pegin.Value |> ignore
+                writeCAmount stream self.Pegin.Value
 
             if int(self.Features &&& KernelFeatures.PEGOUT_FEATURE_BIT) <> 0 then
                 writeArray stream self.Pegouts

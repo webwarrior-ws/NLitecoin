@@ -129,8 +129,7 @@ type Generators =
         { new Arbitrary<RangeProof>() with
             override _.Generator =
                 gen {
-                    let! len = Gen.choose(0, RangeProof.MaxLength)
-                    let! data = Gen.listOfLength len Arb.generate<byte>
+                    let! data = Gen.listOfLength RangeProof.Size Arb.generate<byte>
                     return RangeProof(data |> List.toArray)
                 } }
 
