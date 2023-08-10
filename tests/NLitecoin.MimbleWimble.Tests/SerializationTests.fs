@@ -2,6 +2,7 @@
 
 open System.IO
 
+open NUnit.Framework
 open FsCheck
 open FsCheck.NUnit
 open NBitcoin
@@ -244,3 +245,14 @@ let TxBodyRoundtrip(txBody: TxBody) =
 [<Property(Arbitrary=[|typeof<Generators>|])>]
 let TransactionRoundtrip(transaction: Transaction) =
     roundtripObject transaction Transaction.Read
+
+/// Deserialize transaction generated and serialized by modified litecoin test 
+/// (see https://github.com/litecoin-project/litecoin/blob/5ac781487cc9589131437b23c69829f04002b97e/src/libmw/test/tests/models/tx/Test_Transaction.cpp)
+[<Test>]
+let TestTransactionDeserilaization() =
+    let serializedTransaction = File.ReadAllBytes "transaction.bin"
+    let bitcoinStream = BitcoinStream serializedTransaction
+    let transaction = Transaction.Read bitcoinStream
+
+    Assert.AreEqual(transaction.Body.Kernels[0].Pegin, Some 123L)
+    Assert.AreEqual(transaction.Body.Kernels[1].Fee, Some 5L)

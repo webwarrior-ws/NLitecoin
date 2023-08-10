@@ -8,6 +8,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include="transaction.bin">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <Content Include="transaction1.txt">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
