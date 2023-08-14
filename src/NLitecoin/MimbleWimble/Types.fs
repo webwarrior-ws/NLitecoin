@@ -63,6 +63,10 @@ module Helpers =
 
 type BlindingFactor = 
     | BlindingFactor of uint256
+    member self.ToUInt256() =
+        match self with
+        | BlindingFactor number -> number
+
     static member Read(stream: BitcoinStream) : BlindingFactor =
         BlindingFactor(readUint256 stream)
 
@@ -73,6 +77,13 @@ type BlindingFactor =
 
 type Hash = 
     | Hash of uint256
+    member self.ToUInt256() =
+        match self with
+        | Hash number -> number
+
+    member self.ToBytes() =
+        self.ToUInt256().ToBytes()
+
     static member Read(stream: BitcoinStream) : Hash =
         readUint256 stream |> Hash
 
@@ -209,6 +220,7 @@ type Input =
         ExtraData: array<uint8>
         Signature: Signature
     }
+    
     static member Read(stream: BitcoinStream) : Input =
         assert(not stream.Serializing)
         let featuresByte = ref 0uy
@@ -350,6 +362,67 @@ type RangeProof =
                 assert(bytes.Length = RangeProof.Size)
                 stream.ReadWrite(ref bytes)
 
+type StealthAddress =
+    {
+        ScanPubKey: PublicKey
+        SpendPubKey: PublicKey
+    }
+    static member Random() =
+        let scanPubKeyBytes = Array.zeroCreate PublicKey.NumBytes
+        NBitcoin.RandomUtils.Random.GetBytes scanPubKeyBytes
+        let spendPubKeyBytes = Array.zeroCreate PublicKey.NumBytes
+        NBitcoin.RandomUtils.Random.GetBytes spendPubKeyBytes
+        {
+            ScanPubKey = PublicKey(BigInt scanPubKeyBytes)
+            SpendPubKey = PublicKey(BigInt spendPubKeyBytes)
+        }
+
+type OutputMask =
+    {
+        PreBlind: BlindingFactor
+        ValueMask: uint64
+        NonceMask: BigInt
+    }
+    static member NonceMaskNumBytes = 16
+    
+    /// Feeds the shared secret 't' into tagged hash functions to derive:
+    ///  q - the blinding factor
+    ///  v' - the value mask
+    ///  n' - the nonce mask
+    static member FromShared (sharedSecret: uint256) =
+        let preBlind = 
+            let hasher = Hasher(HashTags.BLIND)
+            hasher.Write(sharedSecret.ToBytes())
+            hasher.Hash().ToUInt256()
+            |> BlindingFactor.BlindingFactor
+        let valueMask = 
+            let hasher = Hasher(HashTags.VALUE_MASK)
+            hasher.Write(sharedSecret.ToBytes())
+            hasher.Hash().ToBytes() 
+            |> Array.take 8 
+            |> BitConverter.ToUInt64
+        let nonceMask =
+            let hasher = Hasher(HashTags.NONCE_MASK)
+            hasher.Write(sharedSecret.ToBytes())
+            hasher.Hash().ToBytes() 
+            |> Array.take OutputMask.NonceMaskNumBytes 
+            |> BigInt
+        {
+            PreBlind = preBlind
+            ValueMask = valueMask
+            NonceMask = nonceMask
+        }
+
+    member self.MaskValue (value: uint64) =
+        value ^^^ self.ValueMask
+
+    member self.MaskNonce (nonce: BigInt) =
+        Array.map2
+            (^^^)
+            nonce.Data
+            self.NonceMask.Data
+        |> BigInt
+
 type Output =
     {
         Commitment: PedersenCommitment
@@ -380,6 +453,16 @@ type Output =
             write stream self.Message
             write stream self.RangeProof
             write stream self.Signature
+
+    member self.GetOutputID() : Hash =
+        let hasher = Hasher()
+        hasher.Append self.Commitment
+        hasher.Append self.SenderPublicKey
+        hasher.Append self.ReceiverPublicKey
+        hasher.Append(Hasher.CalculateHash self.Message)
+        hasher.Append(Hasher.CalculateHash self.RangeProof)
+        hasher.Append self.Signature
+        hasher.Hash()
 
 type KernelFeatures =
     | FEE_FEATURE_BIT = 0x01
@@ -560,20 +643,58 @@ type Transaction =
         let binaryTx = encoder.DecodeData txString
         use memoryStream = new MemoryStream(binaryTx)
         let bitcoinStream = new BitcoinStream(memoryStream, false)
-        Transaction.Read bitcoinStream
+        let result = Transaction.Read bitcoinStream
+        result
 
     static member Read(stream: BitcoinStream) : Transaction =
-        let result =
-            {
-                KernelOffset = BlindingFactor.Read stream
-                StealthOffset = BlindingFactor.Read stream
-                Body = TxBody.Read stream
-            }
-        
-        result
+        {
+            KernelOffset = BlindingFactor.Read stream
+            StealthOffset = BlindingFactor.Read stream
+            Body = TxBody.Read stream
+        }
 
     interface ISerializeable with
         member self.Write(stream) = 
             self.KernelOffset |> write stream
             self.StealthOffset |> write stream
             self.Body |> write stream
+
+/// Represents an output owned by the wallet, and the keys necessary to spend it.
+/// See https://github.com/litecoin-project/litecoin/blob/master/src/libmw/include/mw/models/wallet/Coin.h
+type Coin = 
+    {
+        AddressIndex: uint32
+        SpendKey: Option<uint256>
+        Blind: Option<BlindingFactor>
+        Amount: CAmount
+        OutputId: Hash
+        SenderKey: Option<uint256>
+        Address: Option<StealthAddress>
+        SharedSecret: Option<uint256>
+    }
+    static member ChangeIndex = 0u
+    static member PeginIndex = 1u
+    static member CustomKey = UInt32.MaxValue - 1u
+    static member UnknownIndex = UInt32.MaxValue
+
+    member self.IsChange = self.AddressIndex = Coin.ChangeIndex
+    member self.IsPegIn = self.AddressIndex = Coin.PeginIndex
+    member self.IsMine = self.AddressIndex <> Coin.UnknownIndex
+
+    static member Empty =
+        {
+            AddressIndex = Coin.UnknownIndex
+            SpendKey = None
+            Blind = None
+            Amount = 0L
+            OutputId = Hash(uint256 0UL)
+            SenderKey = None
+            Address = None
+            SharedSecret = None
+        }
+
+type Recipient =
+    {
+        Amount: CAmount
+        Address: StealthAddress
+    }

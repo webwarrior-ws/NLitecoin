@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
+    <TargetFramework>netstandard2.1</TargetFramework>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <FileVersion>0.1.0.0</FileVersion>
     <AssemblyVersion>0.1.0.0</AssemblyVersion>
@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <Compile Include="MimbleWimble\Types.fs" />
+    <Compile Include="MimbleWimble\Pedersen.fs" />
+    <Compile Include="MimbleWimble\TransactionBuilder.fs" />
     <Compile Include="Litecoin.fs" />
   </ItemGroup>
 
@@ -26,6 +28,7 @@
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.2.1" />
     <PackageReference Include="NBitcoin" Version="6.0.17" />
+    <PackageReference Include="NBitcoin.Secp256k1" Version="3.1.1" />
   </ItemGroup>
 
   <ItemGroup>
