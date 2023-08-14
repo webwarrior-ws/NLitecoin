@@ -7,6 +7,7 @@ open NBitcoin
 open NBitcoin.Protocol
 open Org.BouncyCastle.Crypto.Digests
 open Org.BouncyCastle.Crypto.Parameters
+open Org.BouncyCastle.Math
 
 type ISerializeable =
     abstract Write: BitcoinStream -> unit
@@ -63,6 +64,10 @@ module Helpers =
 
 type BlindingFactor = 
     | BlindindgFactor of uint256
+    member self.ToUint256() =
+        match self with
+        | BlindindgFactor number -> number
+
     static member Read(stream: BitcoinStream) : BlindingFactor =
         BlindindgFactor(readUint256 stream)
 
@@ -73,6 +78,10 @@ type BlindingFactor =
 
 type Hash = 
     | Hash of uint256
+    member self.ToUint256() =
+        match self with
+        | Hash number -> number
+
     static member Read(stream: BitcoinStream) : Hash =
         readUint256 stream |> Hash
 
@@ -209,6 +218,40 @@ type Input =
         ExtraData: array<uint8>
         Signature: Signature
     }
+    /// Creates a standard input with a stealth key (feature bit = 1)// Creates a standard input with a stealth key (feature bit = 1)
+    static member Create (outputId: Hash) (commitment: PedersenCommitment) (inputKey: uint256) (outputKey: uint256) =
+        let features = InputFeatures.STEALTH_KEY_FEATURE_BIT
+
+        let inputPubKey = PublicKey(inputKey.ToBytes() |> BigInt)
+        let outputPubKey = PublicKey(outputKey.ToBytes() |> BigInt)
+
+        // Hash keys (K_i||K_o)
+        let keyHasher = Hasher()
+        keyHasher.Append inputPubKey
+        keyHasher.Append outputPubKey
+        let keyHash = keyHasher.Hash().ToUint256().ToBytes()
+
+        // Calculate aggregated key k_agg = k_i + HASH(K_i||K_o) * k_o
+        let sigKey = 
+            BigInteger(outputKey.ToBytes())
+                .Multiply(BigInteger keyHash)
+                .Add(BigInteger(inputKey.ToBytes()))
+
+        let msgHasher = Hasher()
+        //msgHasher.Append features
+        msgHasher.Append outputId
+        let msgHash = msgHasher.Hash().ToUint256().ToBytes()
+
+        {
+            Features = features
+            OutputID = outputId
+            Commitment = commitment
+            InputPublicKey = Some inputPubKey
+            OutputPublicKey = outputPubKey
+            Signature = failwith "not implemented" //Schnorr.Sign sigKey msgHash
+            ExtraData = Array.empty
+        }
+    
     static member Read(stream: BitcoinStream) : Input =
         assert(not stream.Serializing)
         let featuresByte = ref 0uy
@@ -561,20 +604,67 @@ type Transaction =
         let binaryTx = encoder.DecodeData txString
         use memoryStream = new MemoryStream(binaryTx)
         let bitcoinStream = new BitcoinStream(memoryStream, false)
-        Transaction.Read bitcoinStream
+        let result = Transaction.Read bitcoinStream
+        result
 
     static member Read(stream: BitcoinStream) : Transaction =
-        let result =
-            {
-                KernelOffset = BlindingFactor.Read stream
-                StealthOffset = BlindingFactor.Read stream
-                Body = TxBody.Read stream
-            }
-        
-        result
+        {
+            KernelOffset = BlindingFactor.Read stream
+            StealthOffset = BlindingFactor.Read stream
+            Body = TxBody.Read stream
+        }
 
     interface ISerializeable with
         member self.Write(stream) = 
             self.KernelOffset |> write stream
             self.StealthOffset |> write stream
             self.Body |> write stream
+
+type StealthAddress =
+    {
+        ScanPubKey: PublicKey
+        SpendPubKey: PublicKey
+    }
+    static member Random() =
+        let scanPubKeyBytes = Array.zeroCreate PublicKey.NumBytes
+        NBitcoin.RandomUtils.Random.GetBytes scanPubKeyBytes
+        let spendPubKeyBytes = Array.zeroCreate PublicKey.NumBytes
+        NBitcoin.RandomUtils.Random.GetBytes spendPubKeyBytes
+        {
+            ScanPubKey = PublicKey(BigInt scanPubKeyBytes)
+            SpendPubKey = PublicKey(BigInt spendPubKeyBytes)
+        }
+
+/// Represents an output owned by the wallet, and the keys necessary to spend it.
+/// See https://github.com/litecoin-project/litecoin/blob/master/src/libmw/include/mw/models/wallet/Coin.h
+type Coin = 
+    {
+        AddressIndex: uint32
+        SpendKey: Option<uint256>
+        Blind: Option<BlindingFactor>
+        Amount: CAmount
+        OutputId: Hash
+        SenderKey: Option<uint256>
+        Address: Option<StealthAddress>
+        SharedSecret: Option<uint256>
+    }
+    static member ChangeIndex = 0u
+    static member PeginIndex = 1u
+    static member CustomKey = UInt32.MaxValue - 1u
+    static member UnknownIndex = UInt32.MaxValue
+
+    member self.IsChange = self.AddressIndex = Coin.ChangeIndex
+    member self.IsPegIn = self.AddressIndex = Coin.PeginIndex
+    member self.IsMine = self.AddressIndex <> Coin.UnknownIndex
+
+    static member Empty =
+        {
+            AddressIndex = Coin.UnknownIndex
+            SpendKey = None
+            Blind = None
+            Amount = 0L
+            OutputId = Hash(uint256 0UL)
+            SenderKey = None
+            Address = None
+            SharedSecret = None
+        }

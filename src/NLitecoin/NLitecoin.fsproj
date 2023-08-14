@@ -14,6 +14,8 @@
   <ItemGroup>
     <Compile Include="Litecoin.fs" />
     <Compile Include="MimbleWimble\Types.fs" />
+    <Compile Include="MimbleWimble\Pedersen.fs" />
+    <Compile Include="MimbleWimble\TransactionBuilder.fs" />
   </ItemGroup>
 
   <ItemGroup>
