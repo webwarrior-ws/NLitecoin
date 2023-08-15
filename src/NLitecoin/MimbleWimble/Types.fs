@@ -7,7 +7,6 @@ open NBitcoin
 open NBitcoin.Protocol
 open Org.BouncyCastle.Crypto.Digests
 open Org.BouncyCastle.Crypto.Parameters
-open Org.BouncyCastle.Math
 
 type ISerializeable =
     abstract Write: BitcoinStream -> unit
@@ -218,43 +217,6 @@ type Input =
         ExtraData: array<uint8>
         Signature: Signature
     }
-    /// Creates a standard input with a stealth key (feature bit = 1)// Creates a standard input with a stealth key (feature bit = 1)
-    static member Create (outputId: Hash) (commitment: PedersenCommitment) (inputKey: uint256) (outputKey: uint256) =
-        let features = InputFeatures.STEALTH_KEY_FEATURE_BIT
-
-        let inputPubKey = PublicKey(inputKey.ToBytes() |> BigInt)
-        let outputPubKey = PublicKey(outputKey.ToBytes() |> BigInt)
-
-        // Hash keys (K_i||K_o)
-        let keyHasher = Hasher()
-        keyHasher.Append inputPubKey
-        keyHasher.Append outputPubKey
-        let keyHash = keyHasher.Hash().ToUint256().ToBytes()
-
-        // Calculate aggregated key k_agg = k_i + HASH(K_i||K_o) * k_o
-        let sigKey = 
-            BigInteger(outputKey.ToBytes())
-                .Multiply(BigInteger keyHash)
-                .Add(BigInteger(inputKey.ToBytes()))
-
-        let msgHasher = Hasher()
-        //msgHasher.Append features
-        msgHasher.Append outputId
-        let msgHash = msgHasher.Hash().ToUint256().ToBytes()
-
-        let schnorrSignature =
-            // is this the right one?
-            NBitcoin.Secp256k1.ECPrivKey.Create(sigKey.ToByteArrayUnsigned()).SignBIP340(msgHash)
-        
-        {
-            Features = features
-            OutputID = outputId
-            Commitment = commitment
-            InputPublicKey = Some inputPubKey
-            OutputPublicKey = outputPubKey
-            Signature = Signature(schnorrSignature.ToBytes() |> BigInt)
-            ExtraData = Array.empty
-        }
     
     static member Read(stream: BitcoinStream) : Input =
         assert(not stream.Serializing)
@@ -397,6 +359,67 @@ type RangeProof =
                 assert(bytes.Length = RangeProof.Size)
                 stream.ReadWrite(ref bytes)
 
+type StealthAddress =
+    {
+        ScanPubKey: PublicKey
+        SpendPubKey: PublicKey
+    }
+    static member Random() =
+        let scanPubKeyBytes = Array.zeroCreate PublicKey.NumBytes
+        NBitcoin.RandomUtils.Random.GetBytes scanPubKeyBytes
+        let spendPubKeyBytes = Array.zeroCreate PublicKey.NumBytes
+        NBitcoin.RandomUtils.Random.GetBytes spendPubKeyBytes
+        {
+            ScanPubKey = PublicKey(BigInt scanPubKeyBytes)
+            SpendPubKey = PublicKey(BigInt spendPubKeyBytes)
+        }
+
+type OutputMask =
+    {
+        PreBlind: BlindingFactor
+        ValueMask: uint64
+        NonceMask: BigInt
+    }
+    static member NonceMaskNumBytes = 16
+    
+    /// Feeds the shared secret 't' into tagged hash functions to derive:
+    ///  q - the blinding factor
+    ///  v' - the value mask
+    ///  n' - the nonce mask
+    static member FromShared (sharedSecret: uint256) =
+        let preBlind = 
+            let hasher = Hasher(HashTags.BLIND)
+            hasher.Write(sharedSecret.ToBytes())
+            hasher.Hash().ToUint256()
+            |> BlindingFactor.BlindindgFactor
+        let valueMask = 
+            let hasher = Hasher(HashTags.VALUE_MASK)
+            hasher.Write(sharedSecret.ToBytes())
+            hasher.Hash().ToUint256().ToBytes() 
+            |> Array.take 8 
+            |> BitConverter.ToUInt64
+        let nonceMask =
+            let hasher = Hasher(HashTags.NONCE_MASK)
+            hasher.Write(sharedSecret.ToBytes())
+            hasher.Hash().ToUint256().ToBytes() 
+            |> Array.take OutputMask.NonceMaskNumBytes 
+            |> BigInt
+        {
+            PreBlind = preBlind
+            ValueMask = valueMask
+            NonceMask = nonceMask
+        }
+
+    member self.MaskValue (value: uint64) =
+        value ^^^ self.ValueMask
+
+    member self.MaskNonce (nonce: BigInt) =
+        Array.map2
+            (^^^)
+            nonce.Data
+            self.NonceMask.Data
+        |> BigInt
+
 type Output =
     {
         Commitment: PedersenCommitment
@@ -427,6 +450,16 @@ type Output =
             write stream self.Message
             write stream self.RangeProof
             write stream self.Signature
+
+    member self.GetOutputID() : Hash =
+        let hasher = Hasher()
+        hasher.Append self.Commitment
+        hasher.Append self.SenderPublicKey
+        hasher.Append self.ReceiverPublicKey
+        hasher.Append(Hasher.CalculateHash self.Message)
+        hasher.Append(Hasher.CalculateHash self.RangeProof)
+        hasher.Append self.Signature
+        hasher.Hash()
 
 type KernelFeatures =
     | FEE_FEATURE_BIT = 0x01
@@ -624,21 +657,6 @@ type Transaction =
             self.StealthOffset |> write stream
             self.Body |> write stream
 
-type StealthAddress =
-    {
-        ScanPubKey: PublicKey
-        SpendPubKey: PublicKey
-    }
-    static member Random() =
-        let scanPubKeyBytes = Array.zeroCreate PublicKey.NumBytes
-        NBitcoin.RandomUtils.Random.GetBytes scanPubKeyBytes
-        let spendPubKeyBytes = Array.zeroCreate PublicKey.NumBytes
-        NBitcoin.RandomUtils.Random.GetBytes spendPubKeyBytes
-        {
-            ScanPubKey = PublicKey(BigInt scanPubKeyBytes)
-            SpendPubKey = PublicKey(BigInt spendPubKeyBytes)
-        }
-
 /// Represents an output owned by the wallet, and the keys necessary to spend it.
 /// See https://github.com/litecoin-project/litecoin/blob/master/src/libmw/include/mw/models/wallet/Coin.h
 type Coin = 
@@ -672,3 +690,9 @@ type Coin =
             Address = None
             SharedSecret = None
         }
+
+type Recipient =
+    {
+        Amount: CAmount
+        Address: StealthAddress
+    }

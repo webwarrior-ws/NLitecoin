@@ -63,3 +63,15 @@ let Commit (value: CAmount) (blind: BlindingFactor) : PedersenCommitment =
     let bytes = result.GetEncoded()
     assert(bytes.Length = PedersenCommitment.NumBytes)
     PedersenCommitment(BigInt bytes)
+
+let AddBlindingFactors (positive: array<BlindingFactor>) (negative: array<BlindingFactor>) : BlindingFactor =
+    let sum (factors: array<BlindingFactor>) = 
+        factors
+        |> Array.map (fun blind -> blind.ToUint256().ToBytes() |> BigInteger)
+        |> Array.fold (fun (a : BigInteger) b -> a.Add(b)) BigInteger.Zero
+    
+    let result = (sum positive).Subtract(sum negative)
+    
+    result.ToByteArrayUnsigned()
+    |> uint256
+    |> BlindingFactor.BlindindgFactor
