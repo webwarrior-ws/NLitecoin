@@ -242,13 +242,17 @@ type Input =
         msgHasher.Append outputId
         let msgHash = msgHasher.Hash().ToUint256().ToBytes()
 
+        let schnorrSignature =
+            // is this the right one?
+            NBitcoin.Secp256k1.ECPrivKey.Create(sigKey.ToByteArrayUnsigned()).SignBIP340(msgHash)
+        
         {
             Features = features
             OutputID = outputId
             Commitment = commitment
             InputPublicKey = Some inputPubKey
             OutputPublicKey = outputPubKey
-            Signature = failwith "not implemented" //Schnorr.Sign sigKey msgHash
+            Signature = Signature(schnorrSignature.ToBytes() |> BigInt)
             ExtraData = Array.empty
         }
     
