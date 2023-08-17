@@ -37,7 +37,7 @@ let Commit (value: CAmount) (blind: BlindingFactor) : PedersenCommitment =
     let result =
         generatorG.Multiply(blind.ToUint256().ToBytes() |> BigInteger)
             .Add(generatorH.Multiply(BigInteger.ValueOf value))
-    let bytes = result.GetEncoded()
+    let bytes = result.GetEncoded(true)
     assert(bytes.Length = PedersenCommitment.NumBytes)
     PedersenCommitment(BigInt bytes)
 
