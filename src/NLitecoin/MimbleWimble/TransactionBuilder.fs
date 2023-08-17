@@ -44,9 +44,7 @@ let private CreateInput (outputId: Hash) (commitment: PedersenCommitment) (input
     msgHasher.Append outputId
     let msgHash = msgHasher.Hash().ToUint256().ToBytes()
 
-    let schnorrSignature =
-        // is this the right one?
-        NBitcoin.Secp256k1.ECPrivKey.Create(sigKey.ToByteArrayUnsigned()).SignBIP340(msgHash)
+    let schnorrSignature = EC.SchnorrSign (sigKey.ToByteArrayUnsigned()) msgHash
         
     {
         Features = features

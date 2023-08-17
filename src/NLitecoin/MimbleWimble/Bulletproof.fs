@@ -5,7 +5,6 @@ open System
 open Org.BouncyCastle.Crypto.Digests
 open Org.BouncyCastle.Crypto.Engines
 open Org.BouncyCastle.Security
-open Org.BouncyCastle.Asn1.X9
 open Org.BouncyCastle.Math
 open Org.BouncyCastle.Math.EC
 open NBitcoin
@@ -136,7 +135,7 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : ECFieldElement * ECFieldEle
 
     let createFieldElement (arr: array<uint64>) =
         BigInteger(arr |> Array.map BitConverter.GetBytes |> Array.concat)
-        |> Pedersen.curve.Curve.FromBigInteger
+        |> EC.curve.Curve.FromBigInteger
 
     createFieldElement r1, createFieldElement r2
 
@@ -161,10 +160,10 @@ let UpdateCommit (commit: uint256) (lpt: ECPoint) (rpt: ECPoint) : uint256 =
 
 let ConstructRangeProof (amount: uint64) (key: uint256) (privateNonce: uint256) (rewindNonce: uint256) (proofMessage: array<byte>) (extraData: array<byte>) : RangeProof =
     let commitp = 
-        Pedersen.generatorH.Multiply(BigInteger.ValueOf(int64 amount))
-            .Add(Pedersen.generatorG.Multiply(key.ToBytes() |> BigInteger))
+        EC.generatorH.Multiply(BigInteger.ValueOf(int64 amount))
+            .Add(EC.generatorG.Multiply(key.ToBytes() |> BigInteger))
 
-    let commit = UpdateCommit uint256.Zero commitp Pedersen.generatorH
+    let commit = UpdateCommit uint256.Zero commitp EC.generatorH
 
     let commit = 
         let hasher = Sha256Digest()
@@ -180,12 +179,12 @@ let ConstructRangeProof (amount: uint64) (key: uint256) (privateNonce: uint256) 
 
     // Encrypt value into alpha, so it will be recoverable from -mu by someone who knows rewindNonce
     let alpha = 
-        let vals = BigInteger.ValueOf(int64 amount) |> Pedersen.curve.Curve.FromBigInteger
+        let vals = BigInteger.ValueOf(int64 amount) |> EC.curve.Curve.FromBigInteger
         // Combine value with 20 bytes of optional message
         let vals_bytes = vals.GetEncoded()
         for i=0 to 20-1 do
             vals_bytes.[i+4] <- proofMessage.[i]
-        let vals = BigInteger vals_bytes |> Pedersen.curve.Curve.FromBigInteger
+        let vals = BigInteger vals_bytes |> EC.curve.Curve.FromBigInteger
         // Negate so it'll be positive in -mu
         let vals = vals.Negate()
         alpha.Add vals
