@@ -63,7 +63,7 @@ module Helpers =
 
 type BlindingFactor = 
     | BlindindgFactor of uint256
-    member self.ToUint256() =
+    member self.ToUInt256() =
         match self with
         | BlindindgFactor number -> number
 

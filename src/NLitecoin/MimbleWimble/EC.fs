@@ -31,3 +31,11 @@ let generatorJPub =
 let SchnorrSign (key: array<byte>) (msgHash: array<byte>) =
     // is this the right one?
     NBitcoin.Secp256k1.ECPrivKey.Create(key).SignBIP340(msgHash)
+
+type BigInteger with
+    static member FromByteArrayUnsigned (bytes: array<byte>) =
+        BigInteger(1, bytes)
+
+    member self.ToUInt256() =
+        let bytes = self.ToByteArrayUnsigned()
+        NBitcoin.uint256 (Array.append (Array.zeroCreate (32 - bytes.Length)) bytes)

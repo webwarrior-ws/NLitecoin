@@ -74,7 +74,7 @@ let private CreateInputs (inputCoins: seq<NLitecoin.MimbleWimble.Coin>) : Inputs
 
     {
         TotalBlind = Pedersen.AddBlindingFactors blinds Array.empty
-        TotalKey = (Pedersen.AddBlindingFactors positiveKeys negativeKeys).ToUint256()
+        TotalKey = (Pedersen.AddBlindingFactors positiveKeys negativeKeys).ToUInt256()
         Inputs = inputs
     }
 
@@ -181,7 +181,7 @@ let private CreateOutputs (recipients: seq<Recipient>) : Outputs =
 
     {
         TotalBlind = Pedersen.AddBlindingFactors outputBlinds Array.empty
-        TotalKey = (Pedersen.AddBlindingFactors outputKeys Array.empty).ToUint256()
+        TotalKey = (Pedersen.AddBlindingFactors outputKeys Array.empty).ToUInt256()
         Outputs = outputs
         Coins = coins
     }

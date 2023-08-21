@@ -12,7 +12,7 @@ open EC
 let BlindSwitch (blindingFactor: BlindingFactor) (amount: CAmount) : BlindingFactor =
     let hasher = Sha256Digest()
 
-    let x = blindingFactor.ToUint256().ToBytes() |> BigInteger
+    let x = blindingFactor.ToUInt256().ToBytes() |> BigInteger
     let v = amount.ToString() |> BigInteger
     /// xG + vH
     let commitSerialized = generatorG.Multiply(x).Add(generatorH.Multiply(v)).GetEncoded()
@@ -35,7 +35,7 @@ let BlindSwitch (blindingFactor: BlindingFactor) (amount: CAmount) : BlindingFac
 /// Generates a pedersen commitment: *commit = blind * G + value * H. The blinding factor is 32 bytes.
 let Commit (value: CAmount) (blind: BlindingFactor) : PedersenCommitment =
     let result =
-        generatorG.Multiply(blind.ToUint256().ToBytes() |> BigInteger)
+        generatorG.Multiply(blind.ToUInt256().ToBytes() |> BigInteger)
             .Add(generatorH.Multiply(BigInteger.ValueOf value))
     let bytes = result.GetEncoded(true)
     assert(bytes.Length = PedersenCommitment.NumBytes)
@@ -44,11 +44,11 @@ let Commit (value: CAmount) (blind: BlindingFactor) : PedersenCommitment =
 let AddBlindingFactors (positive: array<BlindingFactor>) (negative: array<BlindingFactor>) : BlindingFactor =
     let sum (factors: array<BlindingFactor>) = 
         factors
-        |> Array.map (fun blind -> blind.ToUint256().ToBytes() |> BigInteger)
-        |> Array.fold (fun (a : BigInteger) b -> a.Add(b)) BigInteger.Zero
+        |> Array.map (fun blind -> blind.ToUInt256().ToBytes() |> BigInteger.FromByteArrayUnsigned |> curve.Curve.FromBigInteger)
+        |> Array.fold (fun (a : ECFieldElement) b -> a.Add b) (curve.Curve.FromBigInteger BigInteger.Zero)
     
     let result = (sum positive).Subtract(sum negative)
     
-    result.ToByteArrayUnsigned()
+    result.ToBigInteger().ToUInt256()
     |> uint256
     |> BlindingFactor.BlindindgFactor
