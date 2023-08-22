@@ -5,6 +5,8 @@
 open NUnit.Framework
 open FsCheck
 open FsCheck.NUnit
+open Org.BouncyCastle.Math
+open NBitcoin
 
 open NLitecoin.MimbleWimble
 open NLitecoin.MimbleWimble.EC
@@ -13,15 +15,16 @@ type ByteArray32Generators =
     static member ByteArray() =
         { new Arbitrary<array<byte>>() with
             override _.Generator =
-                Gen.listOfLength 32 (Gen.choose(0, 255) |> Gen.map byte)
-                |> Gen.map List.toArray }
+                Gen.arrayOfLength 32 (Gen.choose(0, 255) |> Gen.map byte)  }
     
     static member BlindingFactor() =
         { new Arbitrary<BlindingFactor>() with
             override _.Generator =
-                Arb.generate<array<byte>>
-                |> Gen.map NBitcoin.uint256
-                |> Gen.map BlindingFactor.BlindingFactor }
+                gen {
+                    let! bytes = Arb.generate<array<byte>>
+                    let! leadingZeros = Gen.elements [ 0; 0; 0; 1; 31 ]
+                    Array.fill bytes 0 leadingZeros 0uy
+                    return bytes |> NBitcoin.uint256 |> BlindingFactor } }
 
 [<Ignore("Unable to find an entry point named 'secp256k1_schnorrsig_sign' in DLL 'libsecp256k1'")>]
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
@@ -37,11 +40,20 @@ let TestPedersenCommit (value: uint64) (blind: BlindingFactor) =
     ourCommitment = (PedersenCommitment(BigInt referenceCommitment))
 
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
+let TestBlindSwitch (value: uint64) (blind: BlindingFactor) =
+    use pedersen = new Secp256k1ZKP.Net.Pedersen()
+    //let blind = BlindingFactor(uint256.One)
+    let referenceBlind = pedersen.BlindSwitch(value, blind.ToUInt256().ToBytes())
+    let ourBlind = Pedersen.BlindSwitch blind (int64 value)
+    let ourBytes = ourBlind.ToUInt256().ToBytes()
+    ourBlind = (BlindingFactor(uint256 referenceBlind))
+
+[<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
 let TestBlindingFactor (factor: BlindingFactor) =
     let bytes = factor.ToUInt256().ToBytes()
-    (bytes |> Org.BouncyCastle.Math.BigInteger.FromByteArrayUnsigned |> EC.curve.Curve.FromBigInteger).GetEncoded() = bytes
+    (bytes |> BigInteger.FromByteArrayUnsigned |> EC.curve.Curve.FromBigInteger).GetEncoded() = bytes
 
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
 let TestBigIntegerToUInt256 (bytes: array<byte>) =
-    let integer = bytes |> Org.BouncyCastle.Math.BigInteger.FromByteArrayUnsigned
+    let integer = bytes |> BigInteger.FromByteArrayUnsigned
     integer = (integer.ToUInt256().ToBytes() |> Org.BouncyCastle.Math.BigInteger.FromByteArrayUnsigned)
