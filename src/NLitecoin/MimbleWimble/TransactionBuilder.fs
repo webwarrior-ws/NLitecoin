@@ -67,7 +67,7 @@ let private CreateInputs (inputCoins: seq<NLitecoin.MimbleWimble.Coin>) : Inputs
                     (Pedersen.Commit inputCoin.Amount blind) 
                     ephemeralKey 
                     inputCoin.SpendKey.Value
-            yield blind, (BlindindgFactor ephemeralKey, BlindindgFactor inputCoin.SpendKey.Value), input |]
+            yield blind, (BlindingFactor ephemeralKey, BlindingFactor inputCoin.SpendKey.Value), input |]
         |> Array.unzip3
 
     let positiveKeys, negativeKeys = Array.unzip keys
@@ -177,7 +177,7 @@ let private CreateOutputs (recipients: seq<Recipient>) : Outputs =
     let outputKeys = 
         coins 
         |> Array.choose (fun coin -> coin.SenderKey)
-        |> Array.map BlindindgFactor
+        |> Array.map BlindingFactor
 
     {
         TotalBlind = Pedersen.AddBlindingFactors outputBlinds Array.empty

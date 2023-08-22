@@ -62,18 +62,18 @@ module Helpers =
         stream.ReadWriteAsCompactVarInt(amount |> uint64 |> ref)
 
 type BlindingFactor = 
-    | BlindindgFactor of uint256
+    | BlindingFactor of uint256
     member self.ToUInt256() =
         match self with
-        | BlindindgFactor number -> number
+        | BlindingFactor number -> number
 
     static member Read(stream: BitcoinStream) : BlindingFactor =
-        BlindindgFactor(readUint256 stream)
+        BlindingFactor(readUint256 stream)
 
     interface ISerializeable with
         member self.Write(stream) =
             match self with
-            | BlindindgFactor number -> number |> writeUint256 stream
+            | BlindingFactor number -> number |> writeUint256 stream
 
 type Hash = 
     | Hash of uint256
@@ -391,7 +391,7 @@ type OutputMask =
             let hasher = Hasher(HashTags.BLIND)
             hasher.Write(sharedSecret.ToBytes())
             hasher.Hash().ToUint256()
-            |> BlindingFactor.BlindindgFactor
+            |> BlindingFactor.BlindingFactor
         let valueMask = 
             let hasher = Hasher(HashTags.VALUE_MASK)
             hasher.Write(sharedSecret.ToBytes())

@@ -3,6 +3,7 @@
 open Org.BouncyCastle.Crypto.Parameters
 open Org.BouncyCastle.Asn1.X9
 open Org.BouncyCastle.Math
+open Org.BouncyCastle.Math.EC
 
 let curve = ECNamedCurveTable.GetByName("secp256k1")
 let domainParams = new ECDomainParameters(curve.Curve, curve.G, curve.N, curve.H, curve.GetSeed())
@@ -39,3 +40,41 @@ type BigInteger with
     member self.ToUInt256() =
         let bytes = self.ToByteArrayUnsigned()
         NBitcoin.uint256 (Array.append (Array.zeroCreate (32 - bytes.Length)) bytes)
+
+// should be equivalent to https://github.com/litecoin-project/litecoin/blob/master/src/secp256k1-zkp/src/field_impl.h#L290
+let IsQuadVar (elem: ECFieldElement) =
+    let k = curve.Curve.Field.Characteristic
+    let n = elem.ToBigInteger()
+
+    // jacobi symbol calculation algorithm
+    let rec loop (n: BigInteger) (k: BigInteger) t =
+        if n = BigInteger.Zero then
+            n, k, t
+        else
+            let rec innerLoop (n: BigInteger) t =
+                if n.Mod BigInteger.Two <> BigInteger.Zero then
+                    n, t
+                else
+                    let n = n.Divide BigInteger.Two
+                    let r = k.Mod(BigInteger.ValueOf 8L)
+                    if r = BigInteger.Three || r = (BigInteger.ValueOf 5L) then
+                        innerLoop n -t
+                    else
+                        innerLoop n t
+            let n, t = innerLoop n t
+            
+            if k.Mod BigInteger.Four = BigInteger.Three 
+                && n.Mod BigInteger.Four = BigInteger.Three  then
+                loop (k.Mod n) n -t
+            else
+                loop (k.Mod n) n t
+
+    let _, k, t = loop n k 1
+
+    let jacobi = 
+        if k = BigInteger.One then
+            t
+        else
+            0
+    
+    jacobi >= 0

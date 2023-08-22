@@ -21,7 +21,7 @@ type ByteArray32Generators =
             override _.Generator =
                 Arb.generate<array<byte>>
                 |> Gen.map NBitcoin.uint256
-                |> Gen.map BlindingFactor.BlindindgFactor }
+                |> Gen.map BlindingFactor.BlindingFactor }
 
 [<Ignore("Unable to find an entry point named 'secp256k1_schnorrsig_sign' in DLL 'libsecp256k1'")>]
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
@@ -30,22 +30,11 @@ let TestSchnorrSign (message: array<byte>) (key: array<byte>) =
     (EC.SchnorrSign key message).ToBytes() = secp256k1Schnorr.Sign(message, key)
 
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
-let TestPedersenCommit (value: CAmount) (blind: array<byte>) =
+let TestPedersenCommit (value: uint64) (blind: BlindingFactor) =
     use pedersen = new Secp256k1ZKP.Net.Pedersen()
-    let referenceBlind = pedersen.BlinCommit(System.BitConverter.GetBytes value, blind)
-    let ourBlind = Pedersen.Commit value (BlindingFactor.BlindindgFactor (NBitcoin.uint256 blind))
-    ourBlind = (PedersenCommitment(BigInt referenceBlind))
-
-[<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
-let TestAddBlindingFactors (positive: array<BlindingFactor>) (negative: array<BlindingFactor>) =
-    use pedersen = new Secp256k1ZKP.Net.Pedersen()
-    let referenceSum = 
-        pedersen.BlindSum(
-            positive |> Array.map (fun each -> each.ToUInt256().ToBytes()),
-            negative |> Array.map (fun each -> each.ToUInt256().ToBytes())
-        )
-    let ourSum = Pedersen.AddBlindingFactors positive negative
-    ourSum.ToUInt256().ToBytes() = referenceSum
+    let referenceCommitment = pedersen.Commit(value, blind.ToUInt256().ToBytes())
+    let ourCommitment = Pedersen.Commit (int64 value) blind
+    ourCommitment = (PedersenCommitment(BigInt referenceCommitment))
 
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
 let TestBlindingFactor (factor: BlindingFactor) =

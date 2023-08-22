@@ -139,14 +139,10 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : ECFieldElement * ECFieldEle
 
     createFieldElement r1, createFieldElement r2
 
-// should be equivalent to https://github.com/litecoin-project/litecoin/blob/master/src/secp256k1-zkp/src/field_impl.h#L290
-let IsQuadVar (elem: ECFieldElement) =
-    elem.Sqrt().Square() = elem
-
 let UpdateCommit (commit: uint256) (lpt: ECPoint) (rpt: ECPoint) : uint256 =
     let lparity = 
-        (if IsQuadVar lpt.AffineYCoord then 0uy else 2uy) 
-        + (if IsQuadVar rpt.AffineYCoord then 0uy else 1uy)
+        (if EC.IsQuadVar lpt.AffineYCoord then 0uy else 2uy) 
+        + (if EC.IsQuadVar rpt.AffineYCoord then 0uy else 1uy)
 
     let hasher = Sha256Digest()
     hasher.BlockUpdate(commit.ToBytes(), 0, 32)

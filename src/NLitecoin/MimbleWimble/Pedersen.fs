@@ -30,14 +30,18 @@ let BlindSwitch (blindingFactor: BlindingFactor) (amount: CAmount) : BlindingFac
 
     result.ToByteArrayUnsigned() 
     |> uint256 
-    |> BlindingFactor.BlindindgFactor
+    |> BlindingFactor.BlindingFactor
 
 /// Generates a pedersen commitment: *commit = blind * G + value * H. The blinding factor is 32 bytes.
 let Commit (value: CAmount) (blind: BlindingFactor) : PedersenCommitment =
     let result =
-        generatorG.Multiply(blind.ToUInt256().ToBytes() |> BigInteger)
-            .Add(generatorH.Multiply(BigInteger.ValueOf value))
-    let bytes = result.GetEncoded(true)
+        let blind = blind.ToUInt256().ToBytes() |> BigInteger.FromByteArrayUnsigned
+        let a = generatorG.Multiply(blind)
+        let b = generatorH.Multiply(BigInteger.ValueOf value)
+        a.Add b
+    let bytes = result.GetEncoded true
+    // https://github.com/litecoin-project/litecoin/blob/5ac781487cc9589131437b23c69829f04002b97e/src/secp256k1-zkp/src/modules/commitment/main_impl.h#L41
+    bytes.[0] <- 9uy ^^^ (if EC.IsQuadVar (result.Normalize().YCoord) then 1uy else 0uy)
     assert(bytes.Length = PedersenCommitment.NumBytes)
     PedersenCommitment(BigInt bytes)
 
@@ -51,4 +55,4 @@ let AddBlindingFactors (positive: array<BlindingFactor>) (negative: array<Blindi
     
     result.ToBigInteger().ToUInt256()
     |> uint256
-    |> BlindingFactor.BlindindgFactor
+    |> BlindingFactor.BlindingFactor
