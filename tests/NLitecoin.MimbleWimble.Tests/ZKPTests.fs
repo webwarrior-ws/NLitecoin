@@ -57,3 +57,14 @@ let TestBlindingFactor (factor: BlindingFactor) =
 let TestBigIntegerToUInt256 (bytes: array<byte>) =
     let integer = bytes |> BigInteger.FromByteArrayUnsigned
     integer = (integer.ToUInt256().ToBytes() |> Org.BouncyCastle.Math.BigInteger.FromByteArrayUnsigned)
+
+[<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
+let TestAddBlindingFactors (positive: array<BlindingFactor>) (negative: array<BlindingFactor>) =
+    use pedersen = new Secp256k1ZKP.Net.Pedersen()
+    let referenceSum = 
+        pedersen.BlindSum(
+            positive |> Array.map (fun each -> each.ToUInt256().ToBytes()),
+            negative |> Array.map (fun each -> each.ToUInt256().ToBytes())
+        )
+    let ourSum = Pedersen.AddBlindingFactors positive negative
+    ourSum.ToUInt256().ToBytes() = referenceSum
