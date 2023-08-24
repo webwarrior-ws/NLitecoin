@@ -29,32 +29,32 @@ let Commit (value: CAmount) (blind: BlindingFactor) : PedersenCommitment =
 let BlindSwitch (blindingFactor: BlindingFactor) (amount: CAmount) : BlindingFactor =
     let hasher = Sha256Digest()
 
-    let x = curve.Curve.FromBigInteger(blindingFactor.ToUInt256().ToBytes() |> BigInteger.FromByteArrayUnsigned)
+    let x = blindingFactor.ToUInt256().ToBytes() |> BigInteger.FromByteArrayUnsigned
     /// xG + vH
     let commit = Commit amount blindingFactor
     let commitSerialized = match commit with | PedersenCommitment num -> num.Data
     hasher.BlockUpdate(commitSerialized, 0, commitSerialized.Length)
 
     // xJ
-    let xJ = generatorJPub.Multiply(x.ToBigInteger())
+    let xJ = generatorJPub.Multiply(x)
     let xJSerialized = xJ.GetEncoded true
     hasher.BlockUpdate(xJSerialized, 0, xJSerialized.Length)
 
     let hash = Array.zeroCreate<byte> 32
     hasher.DoFinal(hash, 0) |> ignore
 
-    let result = x.Add(curve.Curve.FromBigInteger(hash |> BigInteger.FromByteArrayUnsigned))
+    let result = x.Add((hash |> BigInteger.FromByteArrayUnsigned).Mod(EC.curve.Curve.Field.Characteristic)).Mod(scalarOrder)
     
-    result.ToBigInteger().ToUInt256()
+    result.ToUInt256()
     |> BlindingFactor
 
 let AddBlindingFactors (positive: array<BlindingFactor>) (negative: array<BlindingFactor>) : BlindingFactor =
     let sum (factors: array<BlindingFactor>) = 
         factors
-        |> Array.map (fun blind -> blind.ToUInt256().ToBytes() |> BigInteger.FromByteArrayUnsigned |> curve.Curve.FromBigInteger)
-        |> Array.fold (fun (a : ECFieldElement) b -> a.Add b) (curve.Curve.FromBigInteger BigInteger.Zero)
+        |> Array.map (fun blind -> blind.ToUInt256().ToBytes() |> BigInteger.FromByteArrayUnsigned)
+        |> Array.fold (fun (a : BigInteger) b -> a.Add b) BigInteger.Zero
     
-    let result = (sum positive).Subtract(sum negative)
+    let result = (sum positive).Subtract(sum negative).Mod(scalarOrder)
     
-    result.ToBigInteger().ToUInt256()
+    result.ToUInt256()
     |> BlindingFactor

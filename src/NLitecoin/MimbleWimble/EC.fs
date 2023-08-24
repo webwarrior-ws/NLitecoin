@@ -8,6 +8,9 @@ open Org.BouncyCastle.Math.EC
 let curve = ECNamedCurveTable.GetByName("secp256k1")
 let domainParams = new ECDomainParameters(curve.Curve, curve.G, curve.N, curve.H, curve.GetSeed())
 
+// see https://github.com/bitcoin-core/secp256k1/issues/1180#issuecomment-1356859346
+let scalarOrder = BigInteger("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141", 16)
+
 let generatorG = curve.G
 let generatorH = 
     curve.Curve.CreatePoint
