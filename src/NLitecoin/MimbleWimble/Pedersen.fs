@@ -10,7 +10,11 @@ open EC
 
 // https://github.com/litecoin-project/litecoin/blob/5ac781487cc9589131437b23c69829f04002b97e/src/secp256k1-zkp/src/modules/commitment/main_impl.h#L41
 let SerializeCommitment (commitment: ECPoint) =
-    let bytes = commitment.GetEncoded true
+    let bytes = 
+        if commitment.XCoord.IsZero && commitment.YCoord.IsZero then
+            Array.zeroCreate 32
+        else
+            commitment.GetEncoded true
     bytes.[0] <- 9uy ^^^ (if EC.IsQuadVar (commitment.Normalize().YCoord) then 1uy else 0uy)
     bytes
 

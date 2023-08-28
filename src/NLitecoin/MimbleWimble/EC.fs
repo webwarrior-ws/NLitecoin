@@ -43,38 +43,41 @@ type BigInteger with
 
 // should be equivalent to https://github.com/litecoin-project/litecoin/blob/master/src/secp256k1-zkp/src/field_impl.h#L290
 let IsQuadVar (elem: ECFieldElement) =
-    let k = curve.Curve.Field.Characteristic
-    let n = elem.ToBigInteger()
+    if isNull elem then
+        false
+    else
+        let k = curve.Curve.Field.Characteristic
+        let n = elem.ToBigInteger()
 
-    // jacobi symbol calculation algorithm
-    let rec loop (n: BigInteger) (k: BigInteger) t =
-        if n = BigInteger.Zero then
-            n, k, t
-        else
-            let rec innerLoop (n: BigInteger) t =
-                if n.Mod BigInteger.Two <> BigInteger.Zero then
-                    n, t
-                else
-                    let n = n.Divide BigInteger.Two
-                    let r = k.Mod(BigInteger.ValueOf 8L)
-                    if r = BigInteger.Three || r = (BigInteger.ValueOf 5L) then
-                        innerLoop n -t
-                    else
-                        innerLoop n t
-            let n, t = innerLoop n t
-            
-            if k.Mod BigInteger.Four = BigInteger.Three 
-                && n.Mod BigInteger.Four = BigInteger.Three  then
-                loop (k.Mod n) n -t
+        // jacobi symbol calculation algorithm
+        let rec loop (n: BigInteger) (k: BigInteger) t =
+            if n = BigInteger.Zero then
+                n, k, t
             else
-                loop (k.Mod n) n t
+                let rec innerLoop (n: BigInteger) t =
+                    if n.Mod BigInteger.Two <> BigInteger.Zero then
+                        n, t
+                    else
+                        let n = n.Divide BigInteger.Two
+                        let r = k.Mod(BigInteger.ValueOf 8L)
+                        if r = BigInteger.Three || r = (BigInteger.ValueOf 5L) then
+                            innerLoop n -t
+                        else
+                            innerLoop n t
+                let n, t = innerLoop n t
+            
+                if k.Mod BigInteger.Four = BigInteger.Three 
+                    && n.Mod BigInteger.Four = BigInteger.Three  then
+                    loop (k.Mod n) n -t
+                else
+                    loop (k.Mod n) n t
 
-    let _, k, t = loop n k 1
+        let _, k, t = loop n k 1
 
-    let jacobi = 
-        if k = BigInteger.One then
-            t
-        else
-            0
+        let jacobi = 
+            if k = BigInteger.One then
+                t
+            else
+                0
     
-    jacobi >= 0
+        jacobi >= 0
