@@ -44,7 +44,6 @@ let TestBlindSwitch (value: uint64) (blind: BlindingFactor) =
     use pedersen = new Secp256k1ZKP.Net.Pedersen()
     let referenceBlind = pedersen.BlindSwitch(value, blind.ToUInt256().ToBytes())
     let ourBlind = Pedersen.BlindSwitch blind (int64 value)
-    let ourBytes = ourBlind.ToUInt256().ToBytes()
     ourBlind = (BlindingFactor(uint256 referenceBlind))
 
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
