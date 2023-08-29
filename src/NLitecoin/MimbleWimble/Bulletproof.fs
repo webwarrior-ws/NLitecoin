@@ -140,9 +140,12 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
     createScalar r1, createScalar r2
 
 let UpdateCommit (commit: uint256) (lpt: ECPoint) (rpt: ECPoint) : uint256 =
+    let lpt = lpt.Normalize()
+    let rpt = rpt.Normalize()
+
     let lparity = 
-        (if EC.IsQuadVar lpt.AffineYCoord then 0uy else 2uy) 
-        + (if EC.IsQuadVar rpt.AffineYCoord then 0uy else 1uy)
+        (if EC.IsQuadVar (lpt.AffineYCoord) then 0uy else 2uy) 
+        + (if EC.IsQuadVar (rpt.AffineYCoord) then 0uy else 1uy)
 
     let hasher = Sha256Digest()
     hasher.BlockUpdate(commit.ToBytes(), 0, 32)
@@ -192,7 +195,7 @@ type private LrGenerator(nonce: uint256, y: BigInteger, z: BigInteger, nbits: in
         yn <- yn.Multiply y
         z22n <- z22n.Add z22n 
 
-        lOut, rOut
+        lOut.Mod(scalarOrder), rOut.Mod(scalarOrder)
 
 type private ABHGData =
     {
@@ -218,6 +221,109 @@ let FloorLog (n: uint32) =
     else
         System.Math.Log(float n, 2.0) |> floor |> uint32
 
+let InnerProductRealProve 
+    (g: ECPoint) 
+    (geng: array<ECPoint>)
+    (genh: array<ECPoint>)
+    (aArr: array<BigInteger>)
+    (bArr: array<BigInteger>)
+    (yInv: BigInteger)
+    (ux: BigInteger)
+    (n: int)
+    (commit: uint256) 
+    : array<ECPoint> =
+    let SECP256K1_BULLETPROOF_MAX_DEPTH = 31
+    let x = Array.create SECP256K1_BULLETPROOF_MAX_DEPTH BigInteger.Zero
+    let xInv = Array.create SECP256K1_BULLETPROOF_MAX_DEPTH BigInteger.Zero
+    
+    let outPts = ResizeArray<ECPoint>()
+    let mutable commit = commit
+    
+    // Protocol 1: Iterate, halving vector size until it is 1
+    let vSizes = 
+        Seq.unfold 
+            (fun halfwidth -> 
+                if halfwidth > IP_AB_SCALARS / 4 then
+                    Some(halfwidth / 2, halfwidth / 2)
+                else
+                    None)
+            (n / 2)
+    vSizes |> Seq.iteri (fun i halfwidth ->
+        let mutable yInvN = BigInteger.One
+
+        let multCallbackLR (odd: int) (gSc: BigInteger) (grouping: int) (idx: int) =
+            let abIdx = (idx / grouping) ^^^ 1
+            // Special-case the primary generator
+            if idx = n then
+                g, gSc
+            else
+                // steps 1/2
+                let pt, sc =
+                    if idx / grouping % 2 = odd then
+                        let sc = bArr.[abIdx].Multiply yInvN
+                        genh.[idx], sc
+                    else
+                        geng.[idx], aArr.[abIdx]
+                // step 3
+                let mutable sc = sc
+                let groupings = 
+                    Seq.initInfinite (fun i -> 1u <<< i)
+                    |> Seq.takeWhile (fun each -> each < uint32 grouping)
+                groupings |> Seq.iteri (fun i gr ->
+                    if (((idx / int gr) % 2) ^^^ ((idx / grouping) % 2)) = odd then
+                        sc <- sc.Multiply x.[i]
+                    else
+                        sc <- sc.Multiply xInv.[i]
+                )
+                pt, sc.Mod(scalarOrder)
+        
+        let multMultivar (inpGSc: BigInteger) (callback: int -> (ECPoint * BigInteger)) (nPoints: int) =
+            let mutable r = generatorG.Multiply inpGSc // Is it the right G?
+            for pointIdx=0 to nPoints-1 do
+                let point, scalar = callback pointIdx
+                r <- r.Add(point.Multiply scalar)
+            r
+
+        // L
+        let gSc =
+            ([| for j=0 to halfwidth-1 do yield aArr.[2*j].Multiply bArr.[2*j+1] |]
+             |> Array.fold (fun (a : BigInteger)b -> a.Add b) BigInteger.Zero)
+             .Multiply(ux).Mod(scalarOrder)
+        
+        outPts.Add(multMultivar gSc (multCallbackLR 0 gSc (1 <<< i)) (n + 1))
+
+        // R 
+        let gSc =
+            ([| for j=0 to halfwidth-1 do yield aArr.[2*j+1].Multiply bArr.[2*j] |]
+             |> Array.fold (fun (a : BigInteger)b -> a.Add b) BigInteger.Zero)
+             .Multiply(ux).Mod(scalarOrder)
+
+        outPts.Add(multMultivar gSc (multCallbackLR 1 gSc (1 <<< i)) (n + 1))
+
+        // x, x^2, x^-1, x^-2
+        commit <-
+            UpdateCommit 
+                commit
+                outPts.[outPts.Count - 2]
+                outPts.[outPts.Count - 1]
+
+        x.[i] <- commit.ToBytes() |> BigInteger.FromByteArrayUnsigned
+        xInv.[i] <- x.[i].ModInverse(scalarOrder)
+
+        // update scalar array
+        for j=0 to halfwidth-1 do
+            aArr.[2*j] <- aArr.[2*j].Multiply x.[i]
+            aArr.[j] <- aArr.[2*j].Add(aArr.[2*j+1].Multiply xInv.[i])
+
+            bArr.[2*j] <- bArr.[2*j].Multiply xInv.[i]
+            bArr.[j] <- bArr.[2*j].Add(bArr.[2*j+1].Multiply x.[i])
+    )
+
+    // I skipped last section, since it seems that this is just optimization and thus optional.
+    // But I'm not 100% sure. yInv is unused.
+    // https://github.com/litecoin-project/litecoin/blob/5ac781487cc9589131437b23c69829f04002b97e/src/secp256k1-zkp/src/modules/bulletproofs/inner_product_impl.h#L719
+    outPts.ToArray()
+
 let InnerProductProofLength (n: int) =
     if n < IP_AB_SCALARS / 2 then
         32 * (1 + 2 * n)
@@ -230,30 +336,68 @@ let InnerProductProve
     (proof: array<byte>) 
     (proofOffset: int)
     (proofLen: ref<int>) 
-    (blindingGen: ECPoint) 
     (generators: array<ECPoint>) 
     (yInv: BigInteger) 
     (n: int) 
-    (cb: ref<BigInteger> -> Option<ECPoint> -> int -> unit) =
+    (cb: ref<BigInteger> -> Option<ECPoint> -> int -> unit)
+    (commitInp: array<byte>) =
     proofLen.Value <- InnerProductProofLength n
     
+    let dotProduct (a: array<ref<BigInteger>>) (b: array<ref<BigInteger>>) =
+        (Array.map2 (fun (x : BigInteger ref) (y : BigInteger ref) -> x.Value.Multiply y.Value) a b
+        |> Array.fold (fun (x : BigInteger) y -> x.Add y) BigInteger.Zero)
+            .Mod(scalarOrder)
+
     // Special-case lengths 0 and 1 whose proofs are just explicit lists of scalars
     if n <= IP_AB_SCALARS / 2 then
         let a = Array.create (IP_AB_SCALARS / 2) (ref BigInteger.Zero)
         let b = Array.create (IP_AB_SCALARS / 2) (ref BigInteger.Zero)
         for i=0 to n-1 do
-            cb a.[i] None (2*i)
-            cb b.[i] None (2*i)
-        let dotProduct =
-            (Array.map2 (fun (x : BigInteger ref) (y : BigInteger ref) -> x.Value.Multiply y.Value) a b
-             |> Array.fold (fun (x : BigInteger) y -> x.Add y) BigInteger.Zero).Mod(scalarOrder)
-        Array.blit (dotProduct.ToUInt256().ToBytes()) 0 proof proofOffset 32
+            cb a.[i] None (2 * i)
+            cb b.[i] None (2 * i + 1)
+        let dot = dotProduct a b
+        Array.blit (dot.ToUInt256().ToBytes()) 0 proof proofOffset 32
         for i=0 to n-1 do
             Array.blit (a.[i].Value.ToUInt256().ToBytes()) 0 proof (proofOffset + 32 * (i + 1)) 32
             Array.blit (b.[i].Value.ToUInt256().ToBytes()) 0 proof (proofOffset + 32 * (i + n + 1)) 32
     else
+        let aArr = Array.create n (ref BigInteger.Zero)
+        let bArr = Array.create n (ref BigInteger.Zero)
+        let geng = generators |> Array.take n
+        let genh = generators |> Array.skip (generators.Length / 2) |> Array.take n
+        for i=0 to n-1 do
+            cb aArr.[i] None (2 * i)
+            cb bArr.[i] None (2 * i + 1)
+
+        // Record final dot product
+        let dot = dotProduct aArr bArr
+        Array.blit (dot.ToUInt256().ToBytes()) 0 proof proofOffset 32
+            
+        // Protocol 2: hash dot product to obtain G-randomizer
+        let commit = 
+            let hasher = Sha256Digest()
+            hasher.BlockUpdate(commitInp, 0, commitInp.Length)
+            hasher.BlockUpdate(proof, proofOffset, 32)
+            let bytes = Array.zeroCreate<byte> 32
+            hasher.DoFinal(bytes, 0) |> ignore
+            bytes
+
+        let proofOffset = proofOffset + 32
         
-        failwith "not yet implemented"
+        let ux = BigInteger.FromByteArrayUnsigned commit
+
+        let outPts = InnerProductRealProve generatorG geng genh (aArr |> Array.map (!)) (bArr |> Array.map (!)) yInv ux n (uint256 commit)
+
+        // Final a/b values
+        let halfNAB = min (IP_AB_SCALARS / 2) n
+        for i=0 to halfNAB-1 do
+            Array.blit (aArr.[i].Value.ToUInt256().ToBytes()) 0 proof (proofOffset + 32 * i) 32
+            Array.blit (bArr.[i].Value.ToUInt256().ToBytes()) 0 proof (proofOffset + 32 * (i + halfNAB)) 32
+        
+        let proofOffset = proofOffset + 64 * halfNAB
+
+        SerializePoints outPts proof proofOffset
+        // commit?
 
 let ConstructRangeProof 
     (amount: uint64) 
@@ -299,9 +443,7 @@ let ConstructRangeProof
         Array.init 
             256 
             (fun _ -> 
-                curve.Curve.CreatePoint(
-                    (curve.Curve.RandomFieldElement random).ToBigInteger(), 
-                    (curve.Curve.RandomFieldElement random).ToBigInteger()))
+                curve.G.Multiply((curve.Curve.RandomFieldElement random).ToBigInteger()) )
     // Compute A and S
     let aL = Array.init nbits (fun i -> amount &&& uint64(1UL <<< i))
     //let aR = aL |> Array.map (fun n -> 1UL - n)
@@ -415,6 +557,11 @@ let ConstructRangeProof
 
     let innerProductProofLength = 64 + 128 + 1
     let plen = ref(RangeProof.Size - innerProductProofLength)
+    
+    let y = y.ModInverse scalarOrder
+    InnerProductProve proof innerProductProofLength plen generators y nbits callback commit
 
-
-    failwith "not implemented"
+    plen.Value <- plen.Value + innerProductProofLength
+    
+    assert(plen.Value = RangeProof.Size)
+    RangeProof proof

@@ -16,6 +16,11 @@ type ByteArray32Generators =
         { new Arbitrary<array<byte>>() with
             override _.Generator =
                 Gen.arrayOfLength 32 (Gen.choose(0, 255) |> Gen.map byte)  }
+
+    static member UInt256() =
+        { new Arbitrary<uint256>() with
+            override _.Generator =
+                Arb.generate<array<byte>> |> Gen.map uint256  }
     
     static member BlindingFactor() =
         { new Arbitrary<BlindingFactor>() with
@@ -66,3 +71,23 @@ let TestAddBlindingFactors (positive: array<BlindingFactor>) (negative: array<Bl
         )
     let ourSum = Pedersen.AddBlindingFactors positive negative
     ourSum.ToUInt256().ToBytes() = referenceSum
+
+[<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
+let TestRangeProofCanBeVerified 
+    (amount: uint64) 
+    (key: uint256) 
+    (privateNonce: uint256) 
+    (rewindNonce: uint256) 
+    (blindingFactor: BlindingFactor) =
+    let commit = 
+        match Pedersen.Commit (int64 amount) blindingFactor with
+        | PedersenCommitment num -> num.Data
+
+    let proofMessage = Array.zeroCreate RangeProof.Size
+    let proof = Bulletproof.ConstructRangeProof amount key privateNonce rewindNonce proofMessage commit
+    let proofData = 
+        match proof with
+        | RangeProof data -> data
+    
+    use secp256k1ZKPRangeProof = new Secp256k1ZKP.Net.RangeProof()
+    secp256k1ZKPRangeProof.Verify(commit, Secp256k1ZKP.Net.ProofStruct(proofData, uint32 proofData.Length))
