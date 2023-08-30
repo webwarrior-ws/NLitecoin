@@ -2,6 +2,9 @@
 
 // Differential tests for zero-knowledge proof components that use https://github.com/tangramproject/Secp256k1-ZKP.Net as reference
 
+open System
+open System.Runtime.InteropServices
+
 open NUnit.Framework
 open FsCheck
 open FsCheck.NUnit
@@ -30,6 +33,15 @@ type ByteArray32Generators =
                     let! leadingZeros = Gen.elements [ 0; 0; 0; 1; 31 ]
                     Array.fill bytes 0 leadingZeros 0uy
                     return bytes |> NBitcoin.uint256 |> BlindingFactor } }
+
+type private Secp256k1ZKpBulletproof() =
+    inherit Secp256k1ZKP.Net.BulletProof()
+
+    [<DllImport("libsecp256k1", CallingConvention = CallingConvention.Cdecl)>]
+    static extern uint64 secp256k1_bulletproof_innerproduct_proof_length(uint64 n)
+
+    member self.InnerproductProofLength(n: uint64) : uint64 =
+        secp256k1_bulletproof_innerproduct_proof_length(n)
 
 [<Ignore("Unable to find an entry point named 'secp256k1_schnorrsig_sign' in DLL 'libsecp256k1'")>]
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
@@ -77,17 +89,28 @@ let TestRangeProofCanBeVerified
     (amount: uint64) 
     (key: uint256) 
     (privateNonce: uint256) 
-    (rewindNonce: uint256) 
-    (blindingFactor: BlindingFactor) =
+    (rewindNonce: uint256) =
     let commit = 
-        match Pedersen.Commit (int64 amount) blindingFactor with
+        match Pedersen.Commit (int64 amount) (BlindingFactor <| key) with
         | PedersenCommitment num -> num.Data
+    let extraData = Array.empty
 
     let proofMessage = Array.zeroCreate RangeProof.Size
-    let proof = Bulletproof.ConstructRangeProof amount key privateNonce rewindNonce proofMessage commit
+    let proof = Bulletproof.ConstructRangeProof amount key privateNonce rewindNonce proofMessage extraData
     let proofData = 
         match proof with
         | RangeProof data -> data
     
-    use secp256k1ZKPRangeProof = new Secp256k1ZKP.Net.RangeProof()
-    secp256k1ZKPRangeProof.Verify(commit, Secp256k1ZKP.Net.ProofStruct(proofData, uint32 proofData.Length))
+    use secp256k1ZKPBulletProof = new Secp256k1ZKpBulletproof()
+    //let proofMessageZKP = secp256k1ZKPBulletProof.ProofSingle(amount, key.ToBytes(), privateNonce.ToBytes(), rewindNonce.ToBytes(), extraData, [||])
+
+    secp256k1ZKPBulletProof.Verify(commit, proofData, extraData)
+
+[<Test>]
+let TestInnerproductProofLength() =
+    use secp256k1ZKPBulletProof = new Secp256k1ZKpBulletproof()
+    for exp=0 to 16 do
+        let n = pown 2 (int exp)
+        let ourLength = Bulletproof.InnerProductProofLength(int n)
+        let referenceLength = secp256k1ZKPBulletProof.InnerproductProofLength(uint64 n)
+        Assert.AreEqual(referenceLength, uint64 ourLength)
