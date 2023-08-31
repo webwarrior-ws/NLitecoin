@@ -174,14 +174,13 @@ type private LrGenerator(nonce: uint256, y: BigInteger, z: BigInteger, nbits: in
     let mutable yn = BigInteger.Zero
 
     member self.Generate(x: BigInteger) : BigInteger * BigInteger =
-        let commitIdx = count / nbits
+        // since we have only 1 commit, commitIdx = 0
+        assert(count / nbits = 0)
         let bitIdx = count % nbits
         let bit = (value >>> bitIdx) &&& 1UL
 
         if bitIdx = 0 then
-            z22n <- z.Square()
-            for i=0 to commitIdx do
-                z22n <- z22n.Multiply z
+            z22n <- z.Square().Multiply(z)
 
         let sl, sr = ScalarChaCha20 nonce (uint64(count + 2))
         let sl = sl.Multiply x
@@ -235,6 +234,7 @@ let rec InnerProductRealProve
     let mutable pfDataGeng = geng
     let mutable pfDataGenh = genh
     let mutable yInvN = BigInteger.One
+    let mutable keepIterating = true
     
     // Protocol 1: Iterate, halving vector size until it is 1
     let vSizes = 
@@ -245,7 +245,9 @@ let rec InnerProductRealProve
                 else
                     None)
             (n / 2)
-    vSizes |> Seq.iteri (fun i halfwidth ->
+    vSizes 
+    |> Seq.takeWhile (fun _ -> keepIterating) 
+    |> Seq.iteri (fun i halfwidth ->
         let grouping = (1 <<< i)
 
         let multCallbackLR (odd: int) (gSc: BigInteger) (idx: int) =
@@ -362,6 +364,8 @@ let rec InnerProductRealProve
 
             InnerProductRealProve g geng genh aArr bArr yInv2 ux halfwidth commit
             |> outPts.AddRange
+            // break
+            keepIterating <- false
     )
 
     outPts.ToArray()
@@ -431,7 +435,6 @@ let InnerProductProve
         let proofOffset = proofOffset + 64 * halfNAB
 
         SerializePoints outPts proof proofOffset
-        // commit?
 
 let ConstructRangeProof 
     (amount: uint64) 
@@ -442,7 +445,7 @@ let ConstructRangeProof
     (extraData: array<byte>) : RangeProof =
     let commitp = 
         EC.generatorH.Multiply(BigInteger.ValueOf(int64 amount))
-            .Add(EC.generatorG.Multiply(key.ToBytes() |> BigInteger))
+            .Add(EC.generatorG.Multiply(key.ToBytes() |> BigInteger.FromByteArrayUnsigned))
 
     let commit = UpdateCommit uint256.Zero commitp EC.generatorH
 
@@ -467,7 +470,7 @@ let ConstructRangeProof
         let vals = BigInteger.FromByteArrayUnsigned vals_bytes
         // Negate so it'll be positive in -mu
         let vals = vals.Negate()
-        alpha.Add vals
+        alpha.Add(vals).Mod(scalarOrder)
 
     let nbits = 64
 
@@ -480,8 +483,8 @@ let ConstructRangeProof
     // Compute A and S
     let aL = Array.init nbits (fun i -> amount &&& uint64(1UL <<< i))
     //let aR = aL |> Array.map (fun n -> 1UL - n)
-    let mutable aj = generatorG.Multiply alpha
-    let mutable sj = generatorG.Multiply rho
+    let mutable a = generatorG.Multiply alpha
+    let mutable s = generatorG.Multiply rho
     for j=0 to nbits - 1 do
         let aterm = generators.[j + generators.Length / 2].Negate()
         let sl, sr = ScalarChaCha20 rewindNonce (uint64(j + 2))
@@ -489,12 +492,12 @@ let ConstructRangeProof
             curve.Curve.CreatePoint(
                 (if aL.[j] <> 0UL then generators.[j].XCoord else aterm.XCoord).ToBigInteger(),
                 (if aL.[j] <> 0UL then generators.[j].YCoord else aterm.YCoord).ToBigInteger())
-        aj <- aj.Add aterm
-        sj <- sj.Add(generators.[j].Multiply sl).Add(generators.[j + generators.Length / 2].Multiply sr)
+        a <- a.Add aterm
+        s <- s.Add(generators.[j].Multiply sl).Add(generators.[j + generators.Length / 2].Multiply sr)
 
     // get challenges y and z
-    let outPt0 = aj
-    let outPt1 = sj
+    let outPt0 = a
+    let outPt1 = s
     let commit = UpdateCommit (uint256 commit) outPt0 outPt1
     let y = BigInteger(commit.ToBytes()).Mod(scalarOrder)
     let commit = UpdateCommit (uint256 commit) outPt0 outPt1
