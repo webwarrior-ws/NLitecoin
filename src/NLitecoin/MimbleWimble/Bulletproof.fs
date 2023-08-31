@@ -162,16 +162,15 @@ let UpdateCommit (commit: uint256) (lpt: ECPoint) (rpt: ECPoint) : uint256 =
     hasher.DoFinal(result, 0) |> ignore
     result |> uint256
 
-let SerializePoints (points: array<ECPoint>) (proof: array<byte>) (offset: int) =
+let SerializePoints (points: array<ECPoint>) (proof: Span<byte>) =
     let bitVecLen = (points.Length + 7) / 8
-    Array.fill proof offset bitVecLen 0uy
+    proof.Slice(0, bitVecLen).Fill 0uy
 
-    points  |> Array.iteri (fun i point ->
+    for i, point in points |> Seq.indexed do
         let x = point.Normalize().XCoord
-        Array.blit (x.GetEncoded()) 0 proof (offset + bitVecLen + i * 32) 32
+        x.GetEncoded().CopyTo(proof.Slice(bitVecLen + i * 32))
         if not(IsQuadVar point.YCoord) then
-            proof.[offset + i / 8] <- proof.[offset + i / 8] ||| uint8(i % 8)
-    )
+            proof.[i / 8] <- proof.[i / 8] ||| uint8(1 <<< i % 8)
 
 type private LrGenerator(nonce: uint256, y: BigInteger, z: BigInteger, nbits: int, value: uint64) =
     let mutable count = 0
@@ -384,24 +383,22 @@ let InnerProductProofLength (n: int) =
         32 * (1 + 2 * (bitCount - 1 + int log) + IP_AB_SCALARS) + int(2u * log + 7u) / 8
 
 let InnerProductProve 
-    (proof: array<byte>) 
-    (proofOffset: int)
-    (proofLen: ref<int>) 
+    (proof: Span<byte>) 
     (generators: array<ECPoint>) 
     (yInv: BigInteger) 
     (n: int) 
     (createArrays: int -> (array<BigInteger> * array<BigInteger>))
     (commitInp: array<byte>) =
-    proofLen.Value <- InnerProductProofLength n
+    let proofLen = InnerProductProofLength n
         
     if n <= IP_AB_SCALARS / 2 then
         // Special-case lengths 0 and 1 whose proofs are just explicit lists of scalars
         let a, b = createArrays(IP_AB_SCALARS / 2)
         let dot = ScalarDotProduct(a, b)
-        Array.blit (dot.ToUInt256().ToBytes()) 0 proof proofOffset 32
+        dot.ToUInt256().ToBytes().CopyTo proof
         for i=0 to n-1 do
-            Array.blit (a.[i].ToUInt256().ToBytes()) 0 proof (proofOffset + 32 * (i + 1)) 32
-            Array.blit (b.[i].ToUInt256().ToBytes()) 0 proof (proofOffset + 32 * (i + n + 1)) 32
+            a.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * (i + 1)))
+            b.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * (i + n + 1)))
     else
         let aArr, bArr = createArrays n
         let geng = generators |> Array.take n
@@ -409,18 +406,18 @@ let InnerProductProve
 
         // Record final dot product
         let dot = ScalarDotProduct(aArr, bArr)
-        Array.blit (dot.ToUInt256().ToBytes()) 0 proof proofOffset 32
+        dot.ToUInt256().ToBytes().CopyTo proof
             
         // Protocol 2: hash dot product to obtain G-randomizer
         let commit = 
             let hasher = Sha256Digest()
             hasher.BlockUpdate(commitInp, 0, commitInp.Length)
-            hasher.BlockUpdate(proof, proofOffset, 32)
+            hasher.BlockUpdate(proof.ToArray(), 0, 32)
             let bytes = Array.zeroCreate<byte> 32
             hasher.DoFinal(bytes, 0) |> ignore
             bytes
 
-        let proofOffset = proofOffset + 32
+        let proof = proof.Slice 32
         
         let ux = BigInteger.FromByteArrayUnsigned commit
 
@@ -429,12 +426,14 @@ let InnerProductProve
         // Final a/b values
         let halfNAB = min (IP_AB_SCALARS / 2) n
         for i=0 to halfNAB-1 do
-            Array.blit (aArr.[i].ToUInt256().ToBytes()) 0 proof (proofOffset + 32 * i) 32
-            Array.blit (bArr.[i].ToUInt256().ToBytes()) 0 proof (proofOffset + 32 * (i + halfNAB)) 32
+            aArr.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * i))
+            bArr.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * (i + halfNAB)))
         
-        let proofOffset = proofOffset + 64 * halfNAB
+        let proof = proof.Slice(64 * halfNAB)
 
-        SerializePoints outPts proof proofOffset
+        SerializePoints outPts proof
+
+    proofLen
 
 let ConstructRangeProof 
     (amount: uint64) 
@@ -555,7 +554,7 @@ let ConstructRangeProof
     let proof : array<byte> = Array.zeroCreate RangeProof.Size
     Array.blit (tauX.ToByteArrayUnsigned()) 0 proof 0 32
     Array.blit (mu.ToByteArrayUnsigned()) 0 proof 32 32
-    SerializePoints [| outPt0; outPt1; outPt2; outPt3 |] proof 64
+    SerializePoints [| outPt0; outPt1; outPt2; outPt3 |] (proof.AsSpan().Slice 64)
 
     // Mix this into the hash so the input to the inner product proof is fixed
     let commit =
@@ -572,13 +571,12 @@ let ConstructRangeProof
         Array.init n (fun _ -> lrGen.Generate x)
         |> Array.unzip
 
-    let innerProductProofLength = 64 + 128 + 1
-    let plen = ref(RangeProof.Size - innerProductProofLength)
+    let innerProductProofOffset = 64 + 128 + 1
     
     let y = y.ModInverse scalarOrder
-    InnerProductProve proof innerProductProofLength plen generators y nbits createArraysCallback commit
+    let innerProductProofLength = 
+        InnerProductProve (proof.AsSpan().Slice innerProductProofOffset) generators y nbits createArraysCallback commit
 
-    plen.Value <- plen.Value + innerProductProofLength
-    
-    assert(plen.Value = RangeProof.Size)
+    assert(innerProductProofLength + innerProductProofOffset = RangeProof.Size)
+    assert(proof.Length = RangeProof.Size)
     RangeProof proof
