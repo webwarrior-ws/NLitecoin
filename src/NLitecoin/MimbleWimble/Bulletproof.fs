@@ -11,6 +11,11 @@ open NBitcoin
 
 open EC
 
+let ScalarDotProduct (vec1: array<BigInteger>, vec2: array<BigInteger>) : BigInteger =
+    (Array.map2 (fun (x : BigInteger) y -> x.Multiply y) vec1 vec2
+    |> Array.fold (fun (x : BigInteger) y -> x.Add y) BigInteger.Zero)
+        .Mod(scalarOrder)
+
 let ScalarCheckOverflow (a: array<uint64>) : bool =
     let SECP256K1_N_0 = 0xBFD25E8CD0364141UL
     let SECP256K1_N_1 = 0xBAAEDCE6AF48A03BUL
@@ -388,16 +393,11 @@ let InnerProductProve
     (createArrays: int -> (array<BigInteger> * array<BigInteger>))
     (commitInp: array<byte>) =
     proofLen.Value <- InnerProductProofLength n
-    
-    let dotProduct (a: array<BigInteger>) (b: array<BigInteger>) =
-        (Array.map2 (fun (x : BigInteger) (y : BigInteger) -> x.Multiply y) a b
-        |> Array.fold (fun (x : BigInteger) y -> x.Add y) BigInteger.Zero)
-            .Mod(scalarOrder)
-    
+        
     if n <= IP_AB_SCALARS / 2 then
         // Special-case lengths 0 and 1 whose proofs are just explicit lists of scalars
         let a, b = createArrays(IP_AB_SCALARS / 2)
-        let dot = dotProduct a b
+        let dot = ScalarDotProduct(a, b)
         Array.blit (dot.ToUInt256().ToBytes()) 0 proof proofOffset 32
         for i=0 to n-1 do
             Array.blit (a.[i].ToUInt256().ToBytes()) 0 proof (proofOffset + 32 * (i + 1)) 32
@@ -408,7 +408,7 @@ let InnerProductProve
         let genh = generators |> Array.skip (generators.Length / 2) |> Array.take n
 
         // Record final dot product
-        let dot = dotProduct aArr bArr
+        let dot = ScalarDotProduct(aArr, bArr)
         Array.blit (dot.ToUInt256().ToBytes()) 0 proof proofOffset 32
             
         // Protocol 2: hash dot product to obtain G-randomizer
@@ -507,32 +507,23 @@ let ConstructRangeProof
     // t0 = l(0) dot r(0)
     let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount)
     let t0 = 
-        (Array.fold
-            (fun (acc : BigInteger) _ -> 
-                let l, r = lrGen.Generate BigInteger.Zero
-                l.Multiply(r).Add acc)
-            BigInteger.Zero
-            (Array.zeroCreate nbits)).Mod(scalarOrder)
+        Array.init nbits (fun _ -> lrGen.Generate BigInteger.Zero)
+        |> Array.unzip
+        |> ScalarDotProduct
     
     // A = t0 + t1 + t2 = l(1) dot r(1)
     let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount)
     let A = 
-        (Array.fold
-            (fun (acc : BigInteger) _ -> 
-                let l, r = lrGen.Generate BigInteger.One
-                l.Multiply(r).Add acc)
-            BigInteger.Zero
-            (Array.zeroCreate nbits)).Mod(scalarOrder)
+        Array.init nbits (fun _ -> lrGen.Generate BigInteger.One)
+        |> Array.unzip
+        |> ScalarDotProduct
     
     // B = t0 - t1 + t2 = l(-1) dot r(-1)
     let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount)
     let B = 
-        (Array.fold
-            (fun (acc : BigInteger) _ -> 
-                let l, r = lrGen.Generate (BigInteger.One.Negate().Mod(scalarOrder))
-                l.Multiply(r).Add acc)
-            BigInteger.Zero
-            (Array.zeroCreate nbits)).Mod(scalarOrder)
+        Array.init nbits (fun _ -> lrGen.Generate (BigInteger.One.Negate().Mod(scalarOrder)))
+        |> Array.unzip
+        |> ScalarDotProduct
 
     // t1 = (A - B)/2
     let t1 = A.Subtract(B).Divide(BigInteger.Two).Mod(scalarOrder)
