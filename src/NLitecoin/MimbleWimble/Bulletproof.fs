@@ -2,14 +2,137 @@
 
 open System
 
+open Org.BouncyCastle.Crypto
 open Org.BouncyCastle.Crypto.Digests
-open Org.BouncyCastle.Crypto.Engines
-open Org.BouncyCastle.Security
+open Org.BouncyCastle.Crypto.Parameters
 open Org.BouncyCastle.Math
 open Org.BouncyCastle.Math.EC
 open NBitcoin
 
 open EC
+
+type Rfc6979HmacSha256(key: array<byte>) =
+    let k = Array.create 32 0uy
+    let v = Array.create 32 1uy
+
+    do        
+        let hmac = Macs.HMac(Sha256Digest(), 32)
+        hmac.Init(KeyParameter k)
+        hmac.BlockUpdate(v, 0, 32)
+        hmac.Update(0uy)
+        hmac.BlockUpdate(key, 0, key.Length)
+        hmac.DoFinal(k, 0) |> ignore
+        hmac.Reset()
+        hmac.Init(KeyParameter k)
+        hmac.BlockUpdate(v, 0, 32)
+        hmac.DoFinal(v, 0) |> ignore
+
+        hmac.Reset()
+        hmac.Init(KeyParameter k)
+        hmac.BlockUpdate(v, 0, 32)
+        hmac.Update(1uy)
+        hmac.BlockUpdate(key, 0, key.Length)
+        hmac.DoFinal(k, 0) |> ignore
+        hmac.Reset()
+        hmac.Init(KeyParameter k)
+        hmac.DoFinal(v, 0) |> ignore
+
+    let mutable retry = false
+
+    member self.Generate(outLen: int) : array<byte> =
+        if retry then
+            let hmac = Macs.HMac(Sha256Digest(), 32)
+            hmac.Init(KeyParameter k)
+            hmac.BlockUpdate(v, 0, 32)
+            hmac.Update(0uy)
+            hmac.DoFinal(k, 0) |> ignore
+            hmac.Reset()
+            hmac.Init(KeyParameter k)
+            hmac.BlockUpdate(v, 0, 32)
+            hmac.DoFinal(v, 0) |> ignore
+            
+        let mutable outLen = outLen
+        let out = ResizeArray<byte>()
+        while outLen > 0 do
+            let now = min 32 outLen
+            let hmac = Macs.HMac(Sha256Digest(), 32)
+            hmac.Init(KeyParameter k)
+            hmac.BlockUpdate(v, 0, 32)
+            hmac.DoFinal(v, 0) |> ignore
+            out.AddRange(v |> Array.take now)
+            outLen <- outLen - now
+
+        retry <- true
+
+        out.ToArray()
+
+let ShallueVanDeWoestijne(t: ECFieldElement) : ECPoint =
+    let c = 
+        //BigInteger("0a2d2ba93507f1df233770c2a797962cc61f6d15da14ecd47d8d27ae1cd5f852", 16) 
+        // |> curve.Curve.FromBigInteger
+        (BigInteger.Three |> curve.Curve.FromBigInteger).Negate().Sqrt()
+        
+    let d = 
+        //BigInteger("851695d49a83f8ef919bb86153cbcb16630fb68aed0a766a3ec693d68e6afa40", 16) 
+        //|> curve.Curve.FromBigInteger
+        c.Subtract(curve.Curve.FromBigInteger BigInteger.One).Divide(curve.Curve.FromBigInteger BigInteger.Two)
+    let b = curve.Curve.FromBigInteger(BigInteger.ValueOf 7L)
+
+    let w = c.Multiply(t).Divide(b.AddOne().Add(t.Square()))
+    let x1 = d.Subtract(t.Multiply w)
+    let x2 = x1.AddOne().Negate()
+    let x3 = w.Square().Invert().AddOne()
+
+    let alphaIn = x1.Square().Multiply(x1).Add(b)
+    let betaIn = x2.Square().Multiply(x2).Add(b)
+    let gammaIn = x3.Square().Multiply(x3).Add(b)
+
+    let alphaQuad = IsQuadVar alphaIn
+    let y1 = alphaIn.Sqrt()
+    let betaquad = IsQuadVar betaIn
+    let y2 = betaIn.Sqrt()
+    let y3 = gammaIn.Sqrt()
+
+    let x1 = if (not alphaQuad) && betaquad then x2 else x1
+    let y1 = if (not alphaQuad) && betaquad then y2 else y1
+    let x1 = if (not alphaQuad) && not betaquad then x3 else x1
+    let y1 = if (not alphaQuad) && not betaquad then y3 else y1
+
+    let res = curve.Curve.CreatePoint(x1.ToBigInteger(), y1.ToBigInteger())
+    if t.ToBigInteger().Mod(BigInteger.Two) = BigInteger.One then
+        curve.Curve.CreatePoint(
+            res.XCoord.ToBigInteger(), 
+            res.YCoord.Negate().ToBigInteger()
+        )
+    else
+        res
+
+let GeneratorGenerate (key: array<byte>) : ECPoint =
+    let prefix1 = "1st generation: " |> Text.ASCIIEncoding.ASCII.GetBytes
+    let prefix2 = "2nd generation: " |> Text.ASCIIEncoding.ASCII.GetBytes
+    let sha256 = Sha256Digest()
+    sha256.BlockUpdate(prefix1, 0, 16)
+    sha256.BlockUpdate(key, 0, 32)
+    let b32 = Array.zeroCreate<byte> 32
+    sha256.DoFinal(b32, 0) |> ignore
+    let t = BigInteger.FromByteArrayUnsigned b32 |> curve.Curve.FromBigInteger
+    let accum = ShallueVanDeWoestijne t
+
+    let sha256 = Sha256Digest()
+    sha256.BlockUpdate(prefix2, 0, 16)
+    sha256.BlockUpdate(key, 0, 32)
+    sha256.DoFinal(b32, 0) |> ignore
+    let t = BigInteger.FromByteArrayUnsigned b32 |> curve.Curve.FromBigInteger
+    let accum = accum.Add(ShallueVanDeWoestijne t)
+
+    accum.Normalize()
+
+let GetGenerators (n: int) : array<ECPoint> =
+    let seed = Array.append (generatorG.XCoord.GetEncoded()) (generatorG.YCoord.GetEncoded())
+    let rng = Rfc6979HmacSha256 seed
+    Array.init 
+        n
+        (fun _ -> GeneratorGenerate (rng.Generate 32))
 
 let ScalarDotProduct (vec1: array<BigInteger>, vec2: array<BigInteger>) : BigInteger =
     (Array.map2 (fun (x : BigInteger) y -> x.Multiply y) vec1 vec2
@@ -227,6 +350,7 @@ let rec InnerProductRealProve
     (ux: BigInteger)
     (n: int)
     (commit: uint256) 
+    (recurse: bool)
     : array<ECPoint> =
     let SECP256K1_BULLETPROOF_MAX_DEPTH = 31
     let x = Array.create SECP256K1_BULLETPROOF_MAX_DEPTH BigInteger.Zero
@@ -323,7 +447,7 @@ let rec InnerProductRealProve
         
         // Combine G generators and recurse, if that would be more optimal
         // Is it needed? Or it's just an optimization?
-        if (n > 2048 && i = 3) || (n > 128 && i = 2) || (n > 32 && i = 1) then
+        if recurse && ((n > 2048 && i = 3) || (n > 128 && i = 2) || (n > 32 && i = 1)) then
             let multCallbackG (idx: int) =
                 let pt = pfDataGeng.[idx]
                 let mutable sc = BigInteger.One
@@ -366,7 +490,7 @@ let rec InnerProductRealProve
                 yInv2 <- yInv2.Square()
             yInv2 <- yInv2.Mod(scalarOrder)
 
-            InnerProductRealProve g geng genh aArr bArr yInv2 ux halfwidth commit
+            InnerProductRealProve g geng genh aArr bArr yInv2 ux halfwidth commit recurse
             |> outPts.AddRange
             // break
             keepIterating <- false
@@ -388,7 +512,8 @@ let InnerProductProve
     (yInv: BigInteger) 
     (n: int) 
     (createArrays: int -> (array<BigInteger> * array<BigInteger>))
-    (commitInp: array<byte>) =
+    (commitInp: array<byte>)
+    (recurse: bool)  =
     let proofLen = InnerProductProofLength n
         
     if n <= IP_AB_SCALARS / 2 then
@@ -421,7 +546,7 @@ let InnerProductProve
         
         let ux = BigInteger.FromByteArrayUnsigned commit
 
-        let outPts = InnerProductRealProve generatorG geng genh aArr bArr yInv ux n (uint256 commit)
+        let outPts = InnerProductRealProve generatorG geng genh aArr bArr yInv ux n (uint256 commit) recurse
 
         // Final a/b values
         let halfNAB = min (IP_AB_SCALARS / 2) n
@@ -473,12 +598,8 @@ let ConstructRangeProof
 
     let nbits = 64
 
-    let generators = 
-        let random = SecureRandom()
-        Array.init 
-            256 
-            (fun _ -> 
-                generatorG.Multiply((curve.Curve.RandomFieldElement random).ToBigInteger()) )
+    let generators = GetGenerators 256
+
     // Compute A and S
     let aL = Array.init nbits (fun i -> amount &&& uint64(1UL <<< i))
     //let aR = aL |> Array.map (fun n -> 1UL - n)
@@ -498,9 +619,9 @@ let ConstructRangeProof
     let outPt0 = a
     let outPt1 = s
     let commit = UpdateCommit (uint256 commit) outPt0 outPt1
-    let y = BigInteger(commit.ToBytes()).Mod(scalarOrder)
+    let y = BigInteger.FromByteArrayUnsigned(commit.ToBytes()).Mod(scalarOrder)
     let commit = UpdateCommit (uint256 commit) outPt0 outPt1
-    let z = BigInteger(commit.ToBytes()).Mod(scalarOrder)
+    let z = BigInteger.FromByteArrayUnsigned(commit.ToBytes()).Mod(scalarOrder)
 
     // Compute coefficients t0, t1, t2 of the <l, r> polynomial
     // t0 = l(0) dot r(0)
@@ -566,17 +687,26 @@ let ConstructRangeProof
         hash
 
     // Compute l and r, do inner product proof
-    let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount) 
-    let createArraysCallback (n: int) =
-        Array.init n (fun _ -> lrGen.Generate x)
-        |> Array.unzip
+    let results = 
+        [ true; false ] 
+        |> List.map (fun recurse -> 
+            let proofCopy = Array.copy proof
+            let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount) 
+            let createArraysCallback (n: int) =
+                Array.init n (fun _ -> lrGen.Generate x)
+                |> Array.unzip
 
-    let innerProductProofOffset = 64 + 128 + 1
+            let innerProductProofOffset = 64 + 128 + 1
     
-    let y = y.ModInverse scalarOrder
-    let innerProductProofLength = 
-        InnerProductProve (proof.AsSpan().Slice innerProductProofOffset) generators y nbits createArraysCallback commit
+            let y = y.ModInverse scalarOrder
+            let innerProductProofLength = 
+                InnerProductProve (proofCopy.AsSpan().Slice innerProductProofOffset) generators y nbits createArraysCallback commit recurse
+            proofCopy, innerProductProofLength
+        )
 
+    let proof,innerProductProofLength = results.[1]
+    let diff = Array.map2 (fun x y -> x ^^^ y) (fst results.[0]) (fst results.[1])
+    let innerProductProofOffset = 64 + 128 + 1
     assert(innerProductProofLength + innerProductProofOffset = RangeProof.Size)
     assert(proof.Length = RangeProof.Size)
     RangeProof proof
