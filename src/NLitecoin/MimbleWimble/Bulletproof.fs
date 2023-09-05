@@ -11,54 +11,73 @@ open NBitcoin
 
 open EC
 
+type HmacSha256(key: array<byte>) =
+    let outer = Sha256Digest()
+    let inner = Sha256Digest()
+    do
+        let rKey = Array.zeroCreate<byte> 64
+        Array.blit key 0 rKey 0 key.Length
+        
+        for n=0 to rKey.Length-1 do
+            rKey.[n] <- rKey.[n] ^^^ 0x5cuy
+        outer.BlockUpdate(rKey, 0, 64)
+
+        for n=0 to rKey.Length-1 do
+            rKey.[n] <- rKey.[n] ^^^ 0x5cuy ^^^ 0x36uy
+        inner.BlockUpdate(rKey, 0, 64)
+
+    member self.Write(data: array<byte>) =
+        inner.BlockUpdate(data, 0, data.Length)
+
+    member self.Finalize(out32: array<byte>) =
+        assert(out32.Length = 32)
+        let temp = Array.zeroCreate<byte> 32
+        inner.DoFinal(temp, 0) |> ignore
+        outer.BlockUpdate(temp, 0, 32)
+        outer.DoFinal(out32, 0) |> ignore
+
 type Rfc6979HmacSha256(key: array<byte>) =
     let k = Array.create 32 0uy
     let v = Array.create 32 1uy
 
     do        
-        let hmac = Macs.HMac(Sha256Digest(), 32)
-        hmac.Init(KeyParameter k)
-        hmac.BlockUpdate(v, 0, 32)
-        hmac.Update(0uy)
-        hmac.BlockUpdate(key, 0, key.Length)
-        hmac.DoFinal(k, 0) |> ignore
-        hmac.Reset()
-        hmac.Init(KeyParameter k)
-        hmac.BlockUpdate(v, 0, 32)
-        hmac.DoFinal(v, 0) |> ignore
+        let hmac = HmacSha256 k
+        hmac.Write v
+        hmac.Write [| 0uy |]
+        hmac.Write key
+        hmac.Finalize k
+        let hmac = HmacSha256 k
+        hmac.Write v
+        hmac.Finalize v
 
-        hmac.Reset()
-        hmac.Init(KeyParameter k)
-        hmac.BlockUpdate(v, 0, 32)
-        hmac.Update(1uy)
-        hmac.BlockUpdate(key, 0, key.Length)
-        hmac.DoFinal(k, 0) |> ignore
-        hmac.Reset()
-        hmac.Init(KeyParameter k)
-        hmac.DoFinal(v, 0) |> ignore
+        let hmac = HmacSha256 k
+        hmac.Write v
+        hmac.Write [| 1uy |]
+        hmac.Write key
+        hmac.Finalize k
+        let hmac = HmacSha256 k
+        hmac.Write v
+        hmac.Finalize v
 
     let mutable retry = false
 
     member self.Generate(outLen: int) : array<byte> =
         if retry then
-            let hmac = Macs.HMac(Sha256Digest(), 32)
-            hmac.Init(KeyParameter k)
-            hmac.BlockUpdate(v, 0, 32)
-            hmac.Update(0uy)
-            hmac.DoFinal(k, 0) |> ignore
-            hmac.Reset()
-            hmac.Init(KeyParameter k)
-            hmac.BlockUpdate(v, 0, 32)
-            hmac.DoFinal(v, 0) |> ignore
+            let hmac = HmacSha256 k
+            hmac.Write v
+            hmac.Write [| 0uy |]
+            hmac.Finalize k
+            let hmac = HmacSha256 k
+            hmac.Write v
+            hmac.Finalize v
             
         let mutable outLen = outLen
         let out = ResizeArray<byte>()
         while outLen > 0 do
             let now = min 32 outLen
-            let hmac = Macs.HMac(Sha256Digest(), 32)
-            hmac.Init(KeyParameter k)
-            hmac.BlockUpdate(v, 0, 32)
-            hmac.DoFinal(v, 0) |> ignore
+            let hmac = HmacSha256 k
+            hmac.Write v
+            hmac.Finalize v
             out.AddRange(v |> Array.take now)
             outLen <- outLen - now
 
