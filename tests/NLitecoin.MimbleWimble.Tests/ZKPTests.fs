@@ -164,3 +164,33 @@ let TestRfc6979HmacSha256() =
         (fun refKey ourKey -> Assert.AreEqual(refKey, ourKey))
         referenceKeys
         ourKeys
+
+[<Test>]
+let TestScalarChaCha20() =
+    // see https://github.com/litecoin-project/litecoin/blob/5ac781487cc9589131437b23c69829f04002b97e/src/secp256k1-zkp/src/tests.c#L1010
+    let seed1 = uint256(Array.zeroCreate<byte> 32)
+
+    let expected1l =
+        [|
+            0x76uy; 0xb8uy; 0xe0uy; 0xaduy; 0xa0uy; 0xf1uy; 0x3duy; 0x90uy
+            0x40uy; 0x5duy; 0x6auy; 0xe5uy; 0x53uy; 0x86uy; 0xbduy; 0x28uy
+            0xbduy; 0xd2uy; 0x19uy; 0xb8uy; 0xa0uy; 0x8duy; 0xeduy; 0x1auy
+            0xa8uy; 0x36uy; 0xefuy; 0xccuy; 0x8buy; 0x77uy; 0x0duy; 0xc7uy
+        |]
+        |> BigInteger.FromByteArrayUnsigned
+    let expected1r =
+        [|
+            0xdauy; 0x41uy; 0x59uy; 0x7cuy; 0x51uy; 0x57uy; 0x48uy; 0x8duy
+            0x77uy; 0x24uy; 0xe0uy; 0x3fuy; 0xb8uy; 0xd8uy; 0x4auy; 0x37uy
+            0x6auy; 0x43uy; 0xb8uy; 0xf4uy; 0x15uy; 0x18uy; 0xa1uy; 0x1cuy
+            0xc3uy; 0x87uy; 0xb6uy; 0x69uy; 0xb2uy; 0xeeuy; 0x65uy; 0x86uy
+        |]
+        |> BigInteger.FromByteArrayUnsigned
+
+    Assert.Less(expected1l, scalarOrder)
+    Assert.Less(expected1r, scalarOrder)
+
+    let l, r = Bulletproof.ScalarChaCha20 seed1 0UL
+
+    Assert.AreEqual(expected1l, l)
+    Assert.AreEqual(expected1r, r)
