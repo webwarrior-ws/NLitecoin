@@ -60,7 +60,6 @@ type private Secp256k1ZKpBulletproof() =
         Marshal.FreeHGlobal gen
         output
 
-
 [<Ignore("Unable to find an entry point named 'secp256k1_schnorrsig_sign' in DLL 'libsecp256k1'")>]
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
 let TestSchnorrSign (message: array<byte>) (key: array<byte>) =
@@ -144,3 +143,24 @@ let TestGeneratorGenerate(key: array<byte>) =
     // skip first byte since serialization formats are different
     referenceGenerator.[1..] = ourGeneratorSerialized.[1..]
 
+[<Test>]
+let TestRfc6979HmacSha256() =
+    // output from modified secp256k1-zkp tests
+    // first 2 keys generated in secp256k1_bulletproof_generators_create
+    // from generatorG as seed
+    let referenceKeys =
+        [| 
+            "edc883a98f9ad8dad390a2c814647b6dac92aed530da554db914ea4f8ad988c7"
+            "d99994e5535e0788752493113103145529e20b38e1c68dc28f67816b2a85b65f"
+        |]
+        |> Array.map(fun str -> Convert.FromHexString str)
+
+    let ourKeys =
+        let seed = Array.append (generatorG.XCoord.GetEncoded()) (generatorG.YCoord.GetEncoded())
+        let rng = Bulletproof.Rfc6979HmacSha256 seed
+        Array.init 2 (fun _ -> rng.Generate 32)
+
+    Array.iter2 
+        (fun refKey ourKey -> Assert.AreEqual(refKey, ourKey))
+        referenceKeys
+        ourKeys
