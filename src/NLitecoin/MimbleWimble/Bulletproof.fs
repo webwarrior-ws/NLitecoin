@@ -68,14 +68,11 @@ type Rfc6979HmacSha256(key: array<byte>) =
 
 let ShallueVanDeWoestijne(t: ECFieldElement) : ECPoint =
     let c = 
-        //BigInteger("0a2d2ba93507f1df233770c2a797962cc61f6d15da14ecd47d8d27ae1cd5f852", 16) 
-        // |> curve.Curve.FromBigInteger
-        (BigInteger.Three |> curve.Curve.FromBigInteger).Negate().Sqrt()
-        
+        BigInteger("0a2d2ba93507f1df233770c2a797962cc61f6d15da14ecd47d8d27ae1cd5f852", 16) 
+        |> curve.Curve.FromBigInteger 
     let d = 
-        //BigInteger("851695d49a83f8ef919bb86153cbcb16630fb68aed0a766a3ec693d68e6afa40", 16) 
-        //|> curve.Curve.FromBigInteger
-        c.Subtract(curve.Curve.FromBigInteger BigInteger.One).Divide(curve.Curve.FromBigInteger BigInteger.Two)
+        BigInteger("851695d49a83f8ef919bb86153cbcb16630fb68aed0a766a3ec693d68e6afa40", 16) 
+        |> curve.Curve.FromBigInteger
     let b = curve.Curve.FromBigInteger(BigInteger.ValueOf 7L)
 
     let w = c.Multiply(t).Divide(b.AddOne().Add(t.Square()))

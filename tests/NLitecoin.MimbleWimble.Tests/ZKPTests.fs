@@ -40,8 +40,26 @@ type private Secp256k1ZKpBulletproof() =
     [<DllImport("libsecp256k1", CallingConvention = CallingConvention.Cdecl)>]
     static extern uint64 secp256k1_bulletproof_innerproduct_proof_length(uint64 n)
 
+    [<DllImport("libsecp256k1", CallingConvention = CallingConvention.Cdecl)>]
+    static extern int secp256k1_generator_generate(nativeint ctx, IntPtr gen, byte[] key32)
+
+    [<DllImport("libsecp256k1", CallingConvention = CallingConvention.Cdecl)>]
+    static extern int secp256k1_generator_serialize(nativeint ctx, byte[] output, IntPtr gen)
+
     member self.InnerproductProofLength(n: uint64) : uint64 =
         secp256k1_bulletproof_innerproduct_proof_length(n)
+
+    member self.GeneratorGenerate(key: array<byte>) =
+        let gen = Marshal.AllocHGlobal 64
+        let opResult = secp256k1_generator_generate(self.Context, gen, key)
+        assert(opResult <> 0)
+        assert(gen <> IntPtr.Zero)
+        let output = Array.zeroCreate<byte> 33
+        let opResult2 = secp256k1_generator_serialize(self.Context, output, gen)
+        assert(opResult2 <> 0)
+        Marshal.FreeHGlobal gen
+        output
+
 
 [<Ignore("Unable to find an entry point named 'secp256k1_schnorrsig_sign' in DLL 'libsecp256k1'")>]
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
@@ -114,3 +132,15 @@ let TestInnerproductProofLength() =
         let ourLength = Bulletproof.InnerProductProofLength(int n)
         let referenceLength = secp256k1ZKPBulletProof.InnerproductProofLength(uint64 n)
         Assert.AreEqual(referenceLength, uint64 ourLength)
+
+[<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
+let TestGeneratorGenerate(key: array<byte>) =
+    use secp256k1ZKPBulletProof = new Secp256k1ZKpBulletproof()
+    let referenceGenerator = secp256k1ZKPBulletProof.GeneratorGenerate key
+    
+    let ourGenerator = Bulletproof.GeneratorGenerate key
+    let ourGeneratorSerialized = ourGenerator.GetEncoded true
+    
+    // skip first byte since serialization formats are different
+    referenceGenerator.[1..] = ourGeneratorSerialized.[1..]
+
