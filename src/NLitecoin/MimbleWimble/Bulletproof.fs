@@ -155,29 +155,12 @@ let ScalarDotProduct (vec1: array<BigInteger>, vec2: array<BigInteger>) : BigInt
     |> Array.fold (fun (x : BigInteger) y -> x.Add y) BigInteger.Zero)
         .Mod(scalarOrder)
 
-let ScalarCheckOverflow (a: array<uint64>) : bool =
-    let SECP256K1_N_0 = 0xBFD25E8CD0364141UL
-    let SECP256K1_N_1 = 0xBAAEDCE6AF48A03BUL
-    let SECP256K1_N_2 = 0xFFFFFFFFFFFFFFFEUL
-    let SECP256K1_N_3 = 0xFFFFFFFFFFFFFFFFUL
-
-    let mutable yes = false
-    let mutable no = false
-    no <- (a.[3] < SECP256K1_N_3) // No need for a > check.
-    no <- no || (a.[2] < SECP256K1_N_2)
-    yes <- yes || (a.[2] > SECP256K1_N_2) && not no
-    no <- no || (a.[1] < SECP256K1_N_1)
-    yes <- yes || (a.[1] > SECP256K1_N_1) && not no
-    yes <- yes || (a.[0] >= SECP256K1_N_0) && not no
-    yes
-
 // port of https://github.com/litecoin-project/litecoin/blob/5ac781487cc9589131437b23c69829f04002b97e/src/secp256k1-zkp/src/scalar.h#L114
 let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
-    let mutable overCount = 0
     let seed32 = seed.ToBytes() |> Array.chunkBySize 4 |> Array.map BitConverter.ToUInt32
     let mutable x = Array.zeroCreate<uint32> 16
-    let mutable r1 = Array.empty
-    let mutable r2 = Array.empty
+    let mutable r1 = BigInteger.Zero
+    let mutable r2 = BigInteger.Zero
     let mutable overCount = 0u
     let mutable over1 = true
     let mutable over2 = true
@@ -194,7 +177,7 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
         else
             p
 
-    let ROTL32(x, n) = ((x) <<< (n) ||| (x) >>> (32-(n)))
+    let inline ROTL32(x: uint32, n) = ((x) <<< (n)) ||| ((x) >>> (32-(n)))
 
     let QUARTERROUND (a,b,c,d) = 
         x.[a] <- x.[a] + x.[b]
@@ -203,8 +186,15 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
         x.[b] <- ROTL32(x.[b] ^^^ x.[c], 12)
         x.[a] <- x.[a] + x.[b]
         x.[d] <- ROTL32(x.[d] ^^^ x.[a], 8)
-        x.[c] <- x.[d]
+        x.[c] <- x.[c] + x.[d]
         x.[b] <- ROTL32(x.[b] ^^^ x.[c], 7)
+
+    let createScalar (arr: array<uint64>) =
+        arr 
+            |> Array.map BitConverter.GetBytes 
+            |> Array.concat
+            |> Array.rev
+            |> BigInteger.FromByteArrayUnsigned
 
     while (over1 || over2) do
         x <- [|
@@ -226,7 +216,7 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
             overCount
         |]
 
-        for i=1 to 10 do
+        for _=1 to 10 do
             QUARTERROUND(0, 4, 8,12)
             QUARTERROUND(1, 5, 9,13)
             QUARTERROUND(2, 6,10,14)
@@ -245,14 +235,14 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
                     0x3320646eu
                     0x79622d32u
                     0x6b206574u
-                    LE32(seed32[0]);
-                    LE32(seed32[1]);
-                    LE32(seed32[2]);
-                    LE32(seed32[3]);
-                    LE32(seed32[4]);
-                    LE32(seed32[5]);
-                    LE32(seed32[6]);
-                    LE32(seed32[7]);
+                    LE32(seed32.[0])
+                    LE32(seed32.[1])
+                    LE32(seed32.[2])
+                    LE32(seed32.[3])
+                    LE32(seed32.[4])
+                    LE32(seed32.[5])
+                    LE32(seed32.[6])
+                    LE32(seed32.[7])
                     uint32 index
                     uint32(index >>> 32)
                     0u
@@ -265,23 +255,22 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
                 BE32(uint64 x.[2]) <<< 32 ||| BE32(uint64 x.[3])
                 BE32(uint64 x.[0]) <<< 32 ||| BE32(uint64 x.[1])
             |]
+            |> createScalar
         r2 <-
             [|
                 BE32(uint64 x.[14]) <<< 32 ||| BE32(uint64 x.[15])
                 BE32(uint64 x.[12]) <<< 32 ||| BE32(uint64 x.[13])
                 BE32(uint64 x.[10]) <<< 32 ||| BE32(uint64 x.[11])
-                BE32(uint64 x.[8]) <<< 32 ||| BE32(uint64 x.[9])
+                BE32(uint64 x.[8])  <<< 32 ||| BE32(uint64 x.[9])
             |]
+            |> createScalar
 
-        over1 <- ScalarCheckOverflow r1
-        over2 <- ScalarCheckOverflow r2
+        over1 <- r1 >= scalarOrder
+        over2 <- r2 >= scalarOrder
 
         overCount <- overCount + 1u
 
-    let createScalar (arr: array<uint64>) =
-        BigInteger(arr |> Array.map BitConverter.GetBytes |> Array.concat).Mod(scalarOrder)
-
-    createScalar r1, createScalar r2
+    r1, r2
 
 let UpdateCommit (commit: uint256) (lpt: ECPoint) (rpt: ECPoint) : uint256 =
     let lpt = lpt.Normalize()
