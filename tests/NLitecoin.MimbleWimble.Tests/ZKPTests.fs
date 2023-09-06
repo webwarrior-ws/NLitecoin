@@ -110,18 +110,17 @@ let TestRangeProofCanBeVerified
     let commit = 
         match Pedersen.Commit (int64 amount) (BlindingFactor <| key) with
         | PedersenCommitment num -> num.Data
-    let extraData = Array.empty
 
-    let proofMessage = Array.zeroCreate RangeProof.Size
-    let proof = Bulletproof.ConstructRangeProof amount key privateNonce rewindNonce proofMessage extraData
+    let proofMessage = Array.zeroCreate 20
+    let proof = Bulletproof.ConstructRangeProof amount key privateNonce rewindNonce proofMessage None
     let proofData = 
         match proof with
         | RangeProof data -> data
     
     use secp256k1ZKPBulletProof = new Secp256k1ZKpBulletproof()
-    //let proofMessageZKP = secp256k1ZKPBulletProof.ProofSingle(amount, key.ToBytes(), privateNonce.ToBytes(), rewindNonce.ToBytes(), extraData, [||])
+    let proofMessageZKP = secp256k1ZKPBulletProof.ProofSingle(amount, key.ToBytes(), privateNonce.ToBytes(), rewindNonce.ToBytes(), null, [||])
 
-    secp256k1ZKPBulletProof.Verify(commit, proofData, extraData)
+    secp256k1ZKPBulletProof.Verify(commit, proofData, null)
 
 [<Test>]
 let TestInnerproductProofLength() =

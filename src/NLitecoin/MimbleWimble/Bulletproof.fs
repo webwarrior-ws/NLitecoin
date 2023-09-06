@@ -277,8 +277,8 @@ let UpdateCommit (commit: uint256) (lpt: ECPoint) (rpt: ECPoint) : uint256 =
     let rpt = rpt.Normalize()
 
     let lparity = 
-        (if EC.IsQuadVar (lpt.AffineYCoord) then 0uy else 2uy) 
-        + (if EC.IsQuadVar (rpt.AffineYCoord) then 0uy else 1uy)
+        (if IsQuadVar lpt.AffineYCoord then 0uy else 2uy) 
+        + (if IsQuadVar rpt.AffineYCoord then 0uy else 1uy)
 
     let hasher = Sha256Digest()
     hasher.BlockUpdate(commit.ToBytes(), 0, 32)
@@ -303,23 +303,23 @@ let SerializePoints (points: array<ECPoint>) (proof: Span<byte>) =
 type private LrGenerator(nonce: uint256, y: BigInteger, z: BigInteger, nbits: int, value: uint64) =
     let mutable count = 0
     let mutable z22n = BigInteger.Zero
-    let mutable yn = BigInteger.Zero
+    let mutable yn = BigInteger.One
 
     member self.Generate(x: BigInteger) : BigInteger * BigInteger =
         // since we have only 1 commit, commitIdx = 0
         assert(count / nbits = 0)
         let bitIdx = count % nbits
-        let bit = (value >>> bitIdx) &&& 1UL
+        let bit = int64(value >>> bitIdx) &&& 1L
 
         if bitIdx = 0 then
-            z22n <- z.Square().Multiply(z)
+            z22n <- z.Square()
 
         let sl, sr = ScalarChaCha20 nonce (uint64(count + 2))
         let sl = sl.Multiply x
         let sr = sr.Multiply x
 
-        let lOut = BigInteger.ValueOf(int64 bit).Subtract(z).Add(sl)
-        let rOut = BigInteger.ValueOf(1L - (int64 bit)).Negate().Add(z).Add(sr).Multiply(yn).Add(z22n)
+        let lOut = BigInteger.ValueOf(bit).Subtract(z).Add(sl)
+        let rOut = BigInteger.ValueOf(1L - bit).Negate().Add(z).Add(sr).Multiply(yn).Add(z22n)
 
         count <- count + 1
 
@@ -571,20 +571,24 @@ let ConstructRangeProof
     (privateNonce: uint256) 
     (rewindNonce: uint256) 
     (proofMessage: array<byte>) 
-    (extraData: array<byte>) : RangeProof =
+    (extraData: Option<array<byte>>) : RangeProof =
     let commitp = 
-        EC.generatorH.Multiply(BigInteger.ValueOf(int64 amount))
-            .Add(EC.generatorG.Multiply(key.ToBytes() |> BigInteger.FromByteArrayUnsigned))
+        generatorH.Multiply(BigInteger.ValueOf(int64 amount))
+            .Add(generatorG.Multiply(key.ToBytes() |> BigInteger.FromByteArrayUnsigned))
 
-    let commit = UpdateCommit uint256.Zero commitp EC.generatorH
+    let commit = UpdateCommit uint256.Zero commitp generatorH
 
     let commit = 
-        let hasher = Sha256Digest()
-        hasher.BlockUpdate(commit.ToBytes(), 0, 32)
-        hasher.BlockUpdate(extraData, 0, extraData.Length)
-        let result = Array.zeroCreate<byte> 32
-        hasher.DoFinal(result, 0) |> ignore
-        result
+        match extraData with
+        | Some bytes ->
+            let hasher = Sha256Digest()
+            hasher.BlockUpdate(commit.ToBytes(), 0, 32)
+            hasher.BlockUpdate(bytes, 0, bytes.Length)
+            let result = Array.zeroCreate<byte> 32
+            hasher.DoFinal(result, 0) |> ignore
+            uint256 result
+        | None ->
+            commit
 
     let alpha, rho = ScalarChaCha20 rewindNonce 0UL
     let tau1, tau2 = ScalarChaCha20 privateNonce 1UL
@@ -613,19 +617,16 @@ let ConstructRangeProof
     for j=0 to nbits - 1 do
         let aterm = generators.[j + generators.Length / 2].Negate()
         let sl, sr = ScalarChaCha20 rewindNonce (uint64(j + 2))
-        let aterm =
-            curve.Curve.CreatePoint(
-                (if aL.[j] <> 0UL then generators.[j].XCoord else aterm.XCoord).ToBigInteger(),
-                (if aL.[j] <> 0UL then generators.[j].YCoord else aterm.YCoord).ToBigInteger())
+        let aterm = if aL.[j] <> 0UL then generators.[j] else aterm
         a <- a.Add aterm
         s <- s.Add(generators.[j].Multiply sl).Add(generators.[j + generators.Length / 2].Multiply sr)
 
     // get challenges y and z
     let outPt0 = a
     let outPt1 = s
-    let commit = UpdateCommit (uint256 commit) outPt0 outPt1
+    let commit = UpdateCommit commit outPt0 outPt1
     let y = BigInteger.FromByteArrayUnsigned(commit.ToBytes()).Mod(scalarOrder)
-    let commit = UpdateCommit (uint256 commit) outPt0 outPt1
+    let commit = UpdateCommit commit outPt0 outPt1
     let z = BigInteger.FromByteArrayUnsigned(commit.ToBytes()).Mod(scalarOrder)
 
     // Compute coefficients t0, t1, t2 of the <l, r> polynomial
@@ -678,8 +679,8 @@ let ConstructRangeProof
 
     // Encode rangeproof stuff
     let proof : array<byte> = Array.zeroCreate RangeProof.Size
-    Array.blit (tauX.ToByteArrayUnsigned()) 0 proof 0 32
-    Array.blit (mu.ToByteArrayUnsigned()) 0 proof 32 32
+    Array.blit (tauX.ToUInt256().ToBytes()) 0 proof 0 32
+    Array.blit (mu.ToUInt256().ToBytes()) 0 proof 32 32
     SerializePoints [| outPt0; outPt1; outPt2; outPt3 |] (proof.AsSpan().Slice 64)
 
     // Mix this into the hash so the input to the inner product proof is fixed
