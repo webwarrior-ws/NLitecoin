@@ -91,6 +91,10 @@ let TestBigIntegerToUInt256 (bytes: array<byte>) =
     integer = (integer.ToUInt256().ToBytes() |> Org.BouncyCastle.Math.BigInteger.FromByteArrayUnsigned)
 
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
+let TestByteArrayToUInt256 (bytes: array<byte>) =
+    bytes = (bytes |> uint256).ToBytes()
+
+[<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
 let TestAddBlindingFactors (positive: array<BlindingFactor>) (negative: array<BlindingFactor>) =
     use pedersen = new Secp256k1ZKP.Net.Pedersen()
     let referenceSum = 
@@ -238,3 +242,26 @@ let TestScalarChaCha20() =
 
     Assert.AreEqual(expected3l, l3)
     Assert.AreEqual(expected3r, r3)
+
+[<Test>]
+let TestUpdateCommit() =
+    // output from modified secp256k1-zkp tests
+    let commit = 
+        "ea47aaa6e111d44f973cffff730dc3f5a41cd1d30687bbfcd8b91ad8fc9d63e6" 
+        |> Convert.FromHexString
+        |> uint256
+    let lpt = 
+        let x = "2dc4b4f3b3d9530c5d1ab2d7fe12291be0aa7c4a0b5ccf6125c958a2867d652a"
+        let y = "6d5e07c347e778672126cb47a8a26d40e84b0639805b219c129c1f34be51a8ba"
+        curve.Curve.CreatePoint(BigInteger(x, 16), BigInteger(y, 16))
+    let rpt = 
+        let x = "62a7bb4d9ab0ff01363368093354af7941d058ebd16a1cd3bd21cfc6401d5112"
+        let y = "44f98a209695e93c28e4293dd9cb113affa4d92e8f1dbdb907d8bcb6271617a9"
+        curve.Curve.CreatePoint(BigInteger(x, 16), BigInteger(y, 16))
+
+    let expected = 
+        "8370c779a784b2188e14f5bf5f936df110361f0fbefee873c9a75e8d928cf4d9"
+        |> Convert.FromHexString
+        |> uint256
+
+    Assert.AreEqual(expected, Bulletproof.UpdateCommit commit lpt rpt)
