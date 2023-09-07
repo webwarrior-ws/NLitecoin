@@ -122,7 +122,7 @@ let TestRangeProofCanBeVerified
         | RangeProof data -> data
     
     use secp256k1ZKPBulletProof = new Secp256k1ZKpBulletproof()
-    let proofMessageZKP = secp256k1ZKPBulletProof.ProofSingle(amount, key.ToBytes(), privateNonce.ToBytes(), rewindNonce.ToBytes(), null, [||])
+    let proofZKP = secp256k1ZKPBulletProof.ProofSingle(amount, key.ToBytes(), privateNonce.ToBytes(), rewindNonce.ToBytes(), null, proofMessage)
 
     secp256k1ZKPBulletProof.Verify(commit, proofData, null)
 

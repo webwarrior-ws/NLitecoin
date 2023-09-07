@@ -276,13 +276,13 @@ let UpdateCommit (commit: uint256) (lpt: ECPoint) (rpt: ECPoint) : uint256 =
     let lpt = lpt.Normalize()
     let rpt = rpt.Normalize()
 
-    let lparity = 
+    let lrparity = 
         (if IsQuadVar lpt.AffineYCoord then 0uy else 2uy) 
         + (if IsQuadVar rpt.AffineYCoord then 0uy else 1uy)
 
     let hasher = Sha256Digest()
     hasher.BlockUpdate(commit.ToBytes(), 0, 32)
-    hasher.Update lparity
+    hasher.Update lrparity
     hasher.BlockUpdate(lpt.AffineXCoord.GetEncoded(), 0, 32)
     hasher.BlockUpdate(rpt.AffineXCoord.GetEncoded(), 0, 32)
     
@@ -611,13 +611,15 @@ let ConstructRangeProof
 
     // Compute A and S
     let aL = Array.init nbits (fun i -> amount &&& uint64(1UL <<< i))
-    //let aR = aL |> Array.map (fun n -> 1UL - n)
     let mutable a = generatorG.Multiply alpha
     let mutable s = generatorG.Multiply rho
     for j=0 to nbits - 1 do
-        let aterm = generators.[j + generators.Length / 2].Negate()
         let sl, sr = ScalarChaCha20 rewindNonce (uint64(j + 2))
-        let aterm = if aL.[j] <> 0UL then generators.[j] else aterm
+        let aterm = 
+            if aL.[j] <> 0UL then 
+                generators.[j] 
+            else 
+                generators.[j + generators.Length / 2].Negate()
         a <- a.Add aterm
         s <- s.Add(generators.[j].Multiply sl).Add(generators.[j + generators.Length / 2].Multiply sr)
 
