@@ -309,17 +309,17 @@ type private LrGenerator(nonce: uint256, y: BigInteger, z: BigInteger, nbits: in
         // since we have only 1 commit, commitIdx = 0
         assert(count / nbits = 0)
         let bitIdx = count % nbits
-        let bit = int64(value >>> bitIdx) &&& 1L
+        let bit = int64((value >>> bitIdx) &&& 1UL)
 
         if bitIdx = 0 then
             z22n <- z.Square()
 
         let sl, sr = ScalarChaCha20 nonce (uint64(count + 2))
-        let sl = sl.Multiply x
-        let sr = sr.Multiply x
+        let al = BigInteger.ValueOf bit 
+        let ar = BigInteger.ValueOf(1L - bit).Negate()
 
-        let lOut = BigInteger.ValueOf(bit).Subtract(z).Add(sl)
-        let rOut = BigInteger.ValueOf(1L - bit).Negate().Add(z).Add(sr).Multiply(yn).Add(z22n)
+        let lOut = al.Subtract(z).Add(sl.Multiply x)
+        let rOut = ar.Add(z).Add(sr.Multiply x).Multiply(yn).Add(z22n)
 
         count <- count + 1
 
@@ -637,6 +637,18 @@ let ConstructRangeProof
         |> Array.unzip
         |> ScalarDotProduct
     
+    // see Bulletproofs: Efficient Range Proofs for Confidential Transactions paper, p. 17
+    let inline t0assertion() =
+        let t0alt =
+            let oneNyN = ScalarDotProduct(Array.create nbits BigInteger.One, Array.init nbits (fun n -> y.Pow n))
+            let oneN2N = ScalarDotProduct(Array.create nbits BigInteger.One, Array.init nbits (fun n -> BigInteger.Two.Pow n))
+            z.Multiply(oneNyN)
+                .Add(z.Square().Multiply(BigInteger.ValueOf(int64 amount)))
+                .Add(z.Square().Negate().Multiply(oneNyN).Subtract(z.Square().Multiply(z).Multiply(oneN2N)))
+                .Mod(scalarOrder)
+        t0alt = t0
+    assert(t0assertion())
+
     // A = t0 + t1 + t2 = l(1) dot r(1)
     let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount)
     let A = 
