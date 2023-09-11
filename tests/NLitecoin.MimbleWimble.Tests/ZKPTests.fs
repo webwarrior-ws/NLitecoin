@@ -130,11 +130,15 @@ let TestRangeProofCanBeVerified
 [<Test>]
 let TestInnerproductProofLength() =
     use secp256k1ZKPBulletProof = new Secp256k1ZKpBulletproof()
-    for exp=0 to 16 do
-        let n = pown 2 (int exp)
-        let ourLength = Bulletproof.InnerProductProofLength(int n)
-        let referenceLength = secp256k1ZKPBulletProof.InnerproductProofLength(uint64 n)
-        Assert.AreEqual(referenceLength, uint64 ourLength)
+    try
+        for exp=0 to 16 do
+            let n = pown 2 (int exp)
+            let ourLength = Bulletproof.InnerProductProofLength(int n)
+            let referenceLength = secp256k1ZKPBulletProof.InnerproductProofLength(uint64 n)
+            Assert.AreEqual(referenceLength, uint64 ourLength)
+    with
+    | :? System.EntryPointNotFoundException ->
+        Assert.Ignore "no secp256k1_bulletproof_innerproduct_proof_length in libsecp256k1 on Linux"
 
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
 let TestGeneratorGenerate(key: array<byte>) =
