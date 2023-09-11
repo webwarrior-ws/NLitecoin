@@ -123,7 +123,10 @@ let TestRangeProofCanBeVerified
         | RangeProof data -> data
     
     use secp256k1ZKPBulletProof = new Secp256k1ZKpBulletproof()
-    let proofZKP = secp256k1ZKPBulletProof.ProofSingle(amount, key.ToBytes(), privateNonce.ToBytes(), rewindNonce.ToBytes(), null, proofMessage)
+    // argument names are wrong here: 3rd param should be rewindNonce and 4th nonce
+    let proofZKP = secp256k1ZKPBulletProof.ProofSingle(amount, key.ToBytes(), rewindNonce.ToBytes(), privateNonce.ToBytes(), null, proofMessage)
+
+    let diff = Array.map2 (^^^) proofData proofZKP.proof
 
     secp256k1ZKPBulletProof.Verify(commit, proofData, null)
 
