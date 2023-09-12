@@ -666,7 +666,7 @@ let ConstructRangeProof
         |> ScalarDotProduct
 
     // t1 = (A - B)/2
-    let t1 = A.Subtract(B).Divide(BigInteger.Two).Mod(scalarOrder)
+    let t1 = A.Subtract(B).Multiply(BigInteger.Two.ModInverse scalarOrder).Mod(scalarOrder)
 
     // t2 = -(-B + t0) + t1
     let t2 = B.Negate().Add(t0).Negate().Add(t1).Mod(scalarOrder)
