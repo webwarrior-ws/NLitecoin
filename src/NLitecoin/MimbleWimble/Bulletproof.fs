@@ -295,10 +295,10 @@ let SerializePoints (points: array<ECPoint>) (proof: Span<byte>) =
     proof.Slice(0, bitVecLen).Fill 0uy
 
     for i, point in points |> Seq.indexed do
-        let x = point.Normalize().XCoord
-        x.GetEncoded().CopyTo(proof.Slice(bitVecLen + i * 32))
-        if not(IsQuadVar point.YCoord) then
-            proof.[i / 8] <- proof.[i / 8] ||| uint8(1 <<< i % 8)
+        let pointNormalized = point.Normalize()
+        pointNormalized.XCoord.GetEncoded().CopyTo(proof.Slice(bitVecLen + i * 32))
+        if not(IsQuadVar pointNormalized.YCoord) then
+            proof.[i / 8] <- proof.[i / 8] ||| uint8(1 <<< (i % 8))
 
 type private LrGenerator(nonce: uint256, y: BigInteger, z: BigInteger, nbits: int, value: uint64) =
     let mutable count = 0
@@ -373,11 +373,11 @@ let rec InnerProductRealProve
     let vSizes = 
         Seq.unfold 
             (fun halfwidth -> 
-                if halfwidth > IP_AB_SCALARS / 4 then
+                if halfwidth > IP_AB_SCALARS / 2 then
                     Some(halfwidth / 2, halfwidth / 2)
                 else
                     None)
-            (n / 2)
+            n
     vSizes 
     |> Seq.takeWhile (fun _ -> keepIterating) 
     |> Seq.iteri (fun i halfwidth ->
@@ -407,6 +407,9 @@ let rec InnerProductRealProve
                     else
                         sc <- sc.Multiply xInv.[i]
                 )
+
+                yInvN <- yInvN.Multiply(yInv).Mod(scalarOrder)
+
                 pt, sc.Mod(scalarOrder)
         
         let multMultivar (callback: int -> (ECPoint * BigInteger)) (nPoints: int) =
@@ -430,6 +433,7 @@ let rec InnerProductRealProve
              |> Array.fold (fun (a : BigInteger)b -> a.Add b) BigInteger.Zero)
              .Multiply(ux).Mod(scalarOrder)
 
+        yInvN <- BigInteger.One
         outPts.Add(multMultivar (multCallbackLR 1 gSc) (n + 1))
 
         // x, x^2, x^-1, x^-2
@@ -450,9 +454,10 @@ let rec InnerProductRealProve
             bArr.[2*j] <- bArr.[2*j].Multiply(xInv.[i]).Mod(scalarOrder)
             bArr.[j] <- bArr.[2*j].Add(bArr.[2*j+1].Multiply x.[i]).Mod(scalarOrder)
         
+        ()
         // Combine G generators and recurse, if that would be more optimal
         // Is it needed? Or it's just an optimization?
-        if recurse && ((n > 2048 && i = 3) || (n > 128 && i = 2) || (n > 32 && i = 1)) then
+        if recurse && (i = 1) then
             let multCallbackG (idx: int) =
                 let pt = pfDataGeng.[idx]
                 let mutable sc = BigInteger.One
@@ -549,7 +554,7 @@ let InnerProductProve
 
         let proof = proof.Slice 32
         
-        let ux = BigInteger.FromByteArrayUnsigned commit
+        let ux = (BigInteger.FromByteArrayUnsigned commit).Mod(scalarOrder)
 
         let outPts = InnerProductRealProve generatorG geng genh aArr bArr yInv ux n (uint256 commit) recurse
 
@@ -610,13 +615,13 @@ let ConstructRangeProof
     let generators = GetGenerators 256
 
     // Compute A and S
-    let aL = Array.init nbits (fun i -> amount &&& uint64(1UL <<< i))
+    let aL = Array.init nbits (fun i -> (amount &&& (1UL <<< i)) <> 0UL )
     let mutable a = generatorG.Multiply alpha
     let mutable s = generatorG.Multiply rho
     for j=0 to nbits - 1 do
         let sl, sr = ScalarChaCha20 rewindNonce (uint64(j + 2))
         let aterm = 
-            if aL.[j] <> 0UL then 
+            if aL.[j] then 
                 generators.[j] 
             else 
                 generators.[j + generators.Length / 2].Negate()
