@@ -154,6 +154,23 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
                 ExtraData = Array.empty
             }
 
+        let rangeProof = 
+            let emptyProofMessage = Array.zeroCreate 20
+            
+            let messageSerialized =
+                use memoryStream = new System.IO.MemoryStream()
+                let stream = new BitcoinStream(memoryStream, true)
+                (message :> ISerializeable).Write stream
+                memoryStream.ToArray()
+
+            Bulletproof.ConstructRangeProof 
+                value 
+                (blind.ToUInt256()) 
+                (NBitcoin.RandomUtils.GetUInt256())
+                (NBitcoin.RandomUtils.GetUInt256())
+                (emptyProofMessage)
+                (Some messageSerialized)
+
         failwith "not implemented"
 
 let private CreateOutputs (recipients: seq<Recipient>) : Outputs =
