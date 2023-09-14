@@ -159,11 +159,9 @@ let ScalarDotProduct (vec1: array<BigInteger>, vec2: array<BigInteger>) : BigInt
 let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
     let seed32 = seed.ToBytes() |> Array.chunkBySize 4 |> Array.map BitConverter.ToUInt32
     let mutable x = Array.zeroCreate<uint32> 16
-    let mutable r1 = BigInteger.Zero
-    let mutable r2 = BigInteger.Zero
+    let mutable r1 = None
+    let mutable r2 = None
     let mutable overCount = 0u
-    let mutable over1 = true
-    let mutable over2 = true
 
     let inline LE32 p =
         if BitConverter.IsLittleEndian then
@@ -190,13 +188,18 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
         x.[b] <- ROTL32(x.[b] ^^^ x.[c], 7)
 
     let createScalar (arr: array<uint64>) =
-        arr 
-            |> Array.map BitConverter.GetBytes 
-            |> Array.concat
-            |> Array.rev
-            |> BigInteger.FromByteArrayUnsigned
+        let result = 
+            arr 
+                |> Array.map BitConverter.GetBytes 
+                |> Array.concat
+                |> Array.rev
+                |> BigInteger.FromByteArrayUnsigned
+        if result >= scalarOrder then
+            None
+        else
+            Some result
 
-    while (over1 || over2) do
+    while (r1.IsNone || r2.IsNone) do
         x <- [|
             0x61707865u
             0x3320646eu
@@ -265,12 +268,9 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
             |]
             |> createScalar
 
-        over1 <- r1 >= scalarOrder
-        over2 <- r2 >= scalarOrder
-
         overCount <- overCount + 1u
 
-    r1, r2
+    r1.Value, r2.Value
 
 let UpdateCommit (commit: uint256) (lpt: ECPoint) (rpt: ECPoint) : uint256 =
     let lpt = lpt.Normalize()
@@ -300,33 +300,34 @@ let SerializePoints (points: array<ECPoint>) (proof: Span<byte>) =
         if not(IsQuadVar pointNormalized.YCoord) then
             proof.[i / 8] <- proof.[i / 8] ||| uint8(1 <<< (i % 8))
 
-type private LrGenerator(nonce: uint256, y: BigInteger, z: BigInteger, nbits: int, value: uint64) =
-    let mutable count = 0
-    let mutable z22n = BigInteger.Zero
+let private LrGenerate 
+    (nonce: uint256) 
+    (y: BigInteger) 
+    (z: BigInteger) 
+    (nbits: int) 
+    (value: uint64) 
+    (x: BigInteger)
+    : seq<BigInteger * BigInteger> =
+    let mutable z22n = z.Square()
     let mutable yn = BigInteger.One
 
-    member self.Generate(x: BigInteger) : BigInteger * BigInteger =
-        // since we have only 1 commit, commitIdx = 0
-        assert(count / nbits = 0)
-        let bitIdx = count % nbits
-        let bit = int64((value >>> bitIdx) &&& 1UL)
+    seq {
+        for bitIdx=0 to nbits-1 do
+            let bit = int64((value >>> bitIdx) &&& 1UL)
+            let count = bitIdx
+            
+            let sl, sr = ScalarChaCha20 nonce (uint64(count + 2))
+            let al = BigInteger.ValueOf bit 
+            let ar = BigInteger.ValueOf(1L - bit).Negate()
 
-        if bitIdx = 0 then
-            z22n <- z.Square()
+            let lOut = al.Subtract(z).Add(sl.Multiply x)
+            let rOut = ar.Add(z).Add(sr.Multiply x).Multiply(yn).Add(z22n)
 
-        let sl, sr = ScalarChaCha20 nonce (uint64(count + 2))
-        let al = BigInteger.ValueOf bit 
-        let ar = BigInteger.ValueOf(1L - bit).Negate()
+            yn <- yn.Multiply y
+            z22n <- z22n.Add z22n 
 
-        let lOut = al.Subtract(z).Add(sl.Multiply x)
-        let rOut = ar.Add(z).Add(sr.Multiply x).Multiply(yn).Add(z22n)
-
-        count <- count + 1
-
-        yn <- yn.Multiply y
-        z22n <- z22n.Add z22n 
-
-        lOut.Mod(scalarOrder), rOut.Mod(scalarOrder)
+            yield lOut.Mod scalarOrder, rOut.Mod scalarOrder
+    }
 
 let IP_AB_SCALARS = 4
 
@@ -459,6 +460,8 @@ let rec InnerProductRealProve
             bArr.[j] <- bArr.[2*j].Add(bArr.[2*j+1].Multiply x.[i]).Mod(scalarOrder)
         
         // Combine G generators and recurse, if that would be more optimal
+        // This optimization is enabled by passing setting passing recurse=true.
+        // Not working correctly at the moment.
         if recurse && (n > 32 && i = 1) then
             let getGPointsAndScalars () =
                 seq {
@@ -636,9 +639,9 @@ let ConstructRangeProof
 
     // Compute coefficients t0, t1, t2 of the <l, r> polynomial
     // t0 = l(0) dot r(0)
-    let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount)
     let t0 = 
-        Array.init nbits (fun _ -> lrGen.Generate BigInteger.Zero)
+        LrGenerate rewindNonce y z nbits amount BigInteger.Zero
+        |> Seq.toArray
         |> Array.unzip
         |> ScalarDotProduct
     
@@ -655,16 +658,16 @@ let ConstructRangeProof
     assert(t0assertion())
 
     // A = t0 + t1 + t2 = l(1) dot r(1)
-    let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount)
     let A = 
-        Array.init nbits (fun _ -> lrGen.Generate BigInteger.One)
+        LrGenerate rewindNonce y z nbits amount BigInteger.One
+        |> Seq.toArray
         |> Array.unzip
         |> ScalarDotProduct
     
     // B = t0 - t1 + t2 = l(-1) dot r(-1)
-    let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount)
     let B = 
-        Array.init nbits (fun _ -> lrGen.Generate (BigInteger.One.Negate().Mod(scalarOrder)))
+        LrGenerate rewindNonce y z nbits amount (BigInteger.One.Negate().Mod(scalarOrder))
+        |> Seq.toArray
         |> Array.unzip
         |> ScalarDotProduct
 
@@ -713,11 +716,7 @@ let ConstructRangeProof
     let results = 
         [ false ] 
         |> List.map (fun recurse -> 
-            let proofCopy = Array.copy proof
-            let lrSequence = 
-                let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount) 
-                Seq.init nbits (fun _ -> lrGen.Generate x)
-    
+            let lrSequence = LrGenerate rewindNonce y z nbits amount x
             let y = y.ModInverse scalarOrder
             InnerProductProve generators y nbits lrSequence commit recurse
         )
