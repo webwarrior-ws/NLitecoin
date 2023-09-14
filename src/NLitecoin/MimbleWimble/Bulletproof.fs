@@ -366,7 +366,6 @@ let rec InnerProductRealProve
 
     let mutable pfDataGeng = geng
     let mutable pfDataGenh = genh
-    let mutable yInvN = BigInteger.One
     let mutable keepIterating = true
     
     // Protocol 1: Iterate, halving vector size until it is 1
@@ -383,61 +382,63 @@ let rec InnerProductRealProve
     |> Seq.iteri (fun i halfwidth ->
         let grouping = (1 <<< i)
 
-        let multCallbackLR (odd: int) (gSc: BigInteger) (idx: int) =
-            let abIdx = (idx / grouping) ^^^ 1
-            // Special-case the primary generator
-            if idx = n then
-                g, gSc
-            else
-                // steps 1/2
-                let pt, sc =
-                    if idx / grouping % 2 = odd then
-                        let sc = bArr.[abIdx].Multiply yInvN
-                        pfDataGenh.[idx], sc
+        let getLrPointsAndScalars (odd: int) (gSc: BigInteger) =
+            seq {
+                let mutable yInvN = BigInteger.One
+                for idx in Seq.initInfinite id do
+                    let abIdx = (idx / grouping) ^^^ 1
+                    // Special-case the primary generator
+                    if idx = n then
+                        yield g, gSc
                     else
-                        pfDataGeng.[idx], aArr.[abIdx]
-                // step 3
-                let mutable sc = sc
-                let groupings = 
-                    Seq.initInfinite (fun i -> 1u <<< i)
-                    |> Seq.takeWhile (fun each -> each < uint32 grouping)
-                groupings |> Seq.iteri (fun i gr ->
-                    if (((idx / int gr) % 2) ^^^ ((idx / grouping) % 2)) = odd then
-                        sc <- sc.Multiply x.[i]
-                    else
-                        sc <- sc.Multiply xInv.[i]
-                )
+                        // steps 1/2
+                        let pt, sc =
+                            if idx / grouping % 2 = odd then
+                                let sc = bArr.[abIdx].Multiply yInvN
+                                pfDataGenh.[idx], sc
+                            else
+                                pfDataGeng.[idx], aArr.[abIdx]
+                        // step 3
+                        let mutable sc = sc
+                        let groupings = 
+                            Seq.initInfinite (fun i -> 1u <<< i)
+                            |> Seq.takeWhile (fun each -> each < uint32 grouping)
+                        groupings |> Seq.iteri (fun i gr ->
+                            if (((idx / int gr) % 2) ^^^ ((idx / grouping) % 2)) = odd then
+                                sc <- sc.Multiply x.[i]
+                            else
+                                sc <- sc.Multiply xInv.[i]
+                        )
 
-                yInvN <- yInvN.Multiply(yInv).Mod(scalarOrder)
+                        yInvN <- yInvN.Multiply(yInv).Mod(scalarOrder)
 
-                pt, sc.Mod(scalarOrder)
+                        yield pt, sc.Mod(scalarOrder)
+            }
         
-        let multMultivar (callback: int -> (ECPoint * BigInteger)) (nPoints: int) =
-            let mutable r = generatorG.Multiply(BigInteger.Zero)
-            for pointIdx=0 to nPoints-1 do
-                let point, scalar = callback pointIdx
-                r <- r.Add(point.Multiply scalar)
-            r
+        let multMultivar (pointsAndScalars: seq<ECPoint * BigInteger>) (nPoints: int) =
+            pointsAndScalars 
+            |> Seq.take nPoints 
+            |> Seq.fold 
+                (fun (acc: ECPoint) (point, scalar) -> acc.Add(point.Multiply scalar) )
+                (generatorG.Multiply BigInteger.Zero)
 
         // L
         let gSc =
-            ([| for j=0 to halfwidth-1 do yield aArr.[2*j].Multiply bArr.[2*j+1] |]
-             |> Array.fold (fun (a : BigInteger)b -> a.Add b) BigInteger.Zero)
+            ([| for j=0 to halfwidth-1 do yield aArr.[2*j], bArr.[2*j+1] |]
+             |> Array.unzip 
+             |> ScalarDotProduct)
              .Multiply(ux).Mod(scalarOrder)
         
-        yInvN <- BigInteger.One
-
-        outPts.Add(multMultivar (multCallbackLR 0 gSc) (n + 1))
+        outPts.Add(multMultivar (getLrPointsAndScalars 0 gSc) (n + 1))
 
         // R 
         let gSc =
-            ([| for j=0 to halfwidth-1 do yield aArr.[2*j+1].Multiply bArr.[2*j] |]
-             |> Array.fold (fun (a : BigInteger)b -> a.Add b) BigInteger.Zero)
+            ([| for j=0 to halfwidth-1 do yield aArr.[2*j+1], bArr.[2*j] |]
+             |> Array.unzip 
+             |> ScalarDotProduct)
              .Multiply(ux).Mod(scalarOrder)
-
-        yInvN <- BigInteger.One
-
-        outPts.Add(multMultivar (multCallbackLR 1 gSc) (n + 1))
+        
+        outPts.Add(multMultivar (getLrPointsAndScalars 1 gSc) (n + 1))
 
         // x, x^2, x^-1, x^-2
         commit <-
@@ -457,44 +458,48 @@ let rec InnerProductRealProve
             bArr.[2*j] <- bArr.[2*j].Multiply(xInv.[i]).Mod(scalarOrder)
             bArr.[j] <- bArr.[2*j].Add(bArr.[2*j+1].Multiply x.[i]).Mod(scalarOrder)
         
-        ()
         // Combine G generators and recurse, if that would be more optimal
-        // Is it needed? Or it's just an optimization?
-        if recurse && (i = 1) then
-            let multCallbackG (idx: int) =
-                let pt = pfDataGeng.[idx]
-                let mutable sc = BigInteger.One
-                let indices = 
-                    Seq.initInfinite id
-                    |> Seq.takeWhile (fun i -> 1 <<< i < grouping)
-                for i in indices do
-                    if idx &&& (1 <<< i) <> 0 then
-                        sc <- sc.Multiply x.[i]
-                    else
-                        sc <- sc.Multiply xInv.[i]
-                pt, sc.Mod scalarOrder
+        if recurse && (n > 32 && i = 1) then
+            let getGPointsAndScalars () =
+                seq {
+                    for idx in Seq.initInfinite id do
+                        let pt = pfDataGeng.[idx]
+                        let mutable sc = BigInteger.One
+                        let indices = 
+                            Seq.initInfinite id
+                            |> Seq.takeWhile (fun i -> 1 <<< i < grouping)
+                        for i in indices do
+                            if idx &&& (1 <<< i) <> 0 then
+                                sc <- sc.Multiply x.[i]
+                            else
+                                sc <- sc.Multiply xInv.[i]
+                        yield pt, sc.Mod scalarOrder
+                }
             
-            let multCallbackH (idx: int) =
-                let pt = pfDataGenh.[idx]
-                let mutable sc = BigInteger.One
-                let indices = 
-                    Seq.initInfinite id
-                    |> Seq.takeWhile (fun i -> 1 <<< i < grouping)
-                for i in indices do
-                    if idx &&& (1 <<< i) <> 0 then
-                        sc <- sc.Multiply xInv.[i]
-                    else
-                        sc <- sc.Multiply x.[i]
-                sc <- sc.Multiply yInvN
-                yInvN <- yInvN.Multiply(yInv).Mod(scalarOrder)
-                pt, sc.Mod scalarOrder
+            let getHPointsAndScalars () =
+                seq {
+                    let mutable yInvN = BigInteger.One
+                    for idx in Seq.initInfinite id do
+                        let pt = pfDataGenh.[idx]
+                        let mutable sc = BigInteger.One
+                        let indices = 
+                            Seq.initInfinite id
+                            |> Seq.takeWhile (fun i -> 1 <<< i < grouping)
+                        for i in indices do
+                            if idx &&& (1 <<< i) <> 0 then
+                                sc <- sc.Multiply xInv.[i]
+                            else
+                                sc <- sc.Multiply x.[i]
+                        sc <- sc.Multiply yInvN
+                        yInvN <- yInvN.Multiply(yInv).Mod(scalarOrder)
+                        yield pt, sc.Mod scalarOrder
+                }
 
             for j=0 to halfwidth-1 do
-                let rG = multMultivar multCallbackG (2 <<< i)
+                let rG = multMultivar (getGPointsAndScalars()) (2 <<< i)
                 pfDataGeng <- pfDataGeng |> Array.skip (2 <<< i)
                 geng.[j] <- rG
-                yInvN <- BigInteger.One
-                let rH = multMultivar multCallbackH (2 <<< i)
+                let rH = multMultivar (getHPointsAndScalars()) (2 <<< i)
                 pfDataGenh <- pfDataGenh |> Array.skip (2 <<< i)
                 genh.[j] <- rH
             
@@ -524,21 +529,21 @@ let InnerProductProve
     (generators: array<ECPoint>) 
     (yInv: BigInteger) 
     (n: int) 
-    (createArrays: int -> (array<BigInteger> * array<BigInteger>))
+    (lrSequence: seq<BigInteger * BigInteger>)
     (commitInp: array<byte>)
     (recurse: bool)  =
     let proofLen = InnerProductProofLength n
         
     if n <= IP_AB_SCALARS / 2 then
         // Special-case lengths 0 and 1 whose proofs are just explicit lists of scalars
-        let a, b = createArrays(IP_AB_SCALARS / 2)
+        let a, b = lrSequence |> Seq.take (IP_AB_SCALARS / 2) |> Seq.toArray |> Array.unzip
         let dot = ScalarDotProduct(a, b)
         dot.ToUInt256().ToBytes().CopyTo proof
         for i=0 to n-1 do
             a.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * (i + 1)))
             b.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * (i + n + 1)))
     else
-        let aArr, bArr = createArrays n
+        let aArr, bArr = lrSequence |> Seq.take n |> Seq.toArray |> Array.unzip
         let geng = generators |> Array.take n
         let genh = generators |> Array.skip (generators.Length / 2) |> Array.take n
 
@@ -719,16 +724,15 @@ let ConstructRangeProof
         [ false ] 
         |> List.map (fun recurse -> 
             let proofCopy = Array.copy proof
-            let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount) 
-            let createArraysCallback (n: int) =
-                Array.init n (fun _ -> lrGen.Generate x)
-                |> Array.unzip
+            let lrSequence = 
+                let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount) 
+                Seq.init nbits (fun _ -> lrGen.Generate x)
 
             let innerProductProofOffset = 64 + 128 + 1
     
             let y = y.ModInverse scalarOrder
             let innerProductProofLength = 
-                InnerProductProve (proofCopy.AsSpan().Slice innerProductProofOffset) generators y nbits createArraysCallback commit recurse
+                InnerProductProve (proofCopy.AsSpan().Slice innerProductProofOffset) generators y nbits lrSequence commit recurse
             proofCopy, innerProductProofLength
         )
 
