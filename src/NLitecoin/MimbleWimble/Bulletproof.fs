@@ -458,13 +458,10 @@ let rec InnerProductRealProve
         
         // Combine G generators and recurse, if that would be more optimal
         if n > 32 && i = 1 then
-            let mutable pfDataGeng = geng
-            let mutable pfDataGenh = genh
-
-            let getGPointsAndScalars () =
+            let getGPointsAndScalars (geng: array<ECPoint>) =
                 seq {
                     for idx in Seq.initInfinite id do
-                        let pt = pfDataGeng.[idx]
+                        let pt = geng.[idx]
                         let mutable sc = BigInteger.One
                         let indices = 
                             Seq.initInfinite id
@@ -477,11 +474,11 @@ let rec InnerProductRealProve
                         yield pt, sc.Mod scalarOrder
                 }
             
-            let getHPointsAndScalars () =
+            let getHPointsAndScalars (genh: array<ECPoint>) =
                 seq {
                     let mutable yInvN = BigInteger.One
                     for idx in Seq.initInfinite id do
-                        let pt = pfDataGenh.[idx]
+                        let pt = genh.[idx]
                         let mutable sc = BigInteger.One
                         let indices = 
                             Seq.initInfinite id
@@ -497,16 +494,16 @@ let rec InnerProductRealProve
                 }
 
             for j=0 to halfwidth-1 do
-                let rG = multMultivar (getGPointsAndScalars()) (2 <<< i)
-                pfDataGeng <- pfDataGeng |> Array.skip (2 <<< i)
+                let rG = multMultivar (getGPointsAndScalars (geng |> Array.skip (j * (2 <<< i)))) (2 <<< i)
                 geng.[j] <- rG
-                let rH = multMultivar (getHPointsAndScalars()) (2 <<< i)
-                pfDataGenh <- pfDataGenh |> Array.skip (2 <<< i)
+                let rH = multMultivar (getHPointsAndScalars (genh |> Array.skip (j * (2 <<< i)))) (2 <<< i)
                 genh.[j] <- rH
             
-            let mutable yInv2 = yInv.Square()
-            for _=0 to i-1 do
-                yInv2 <- yInv2.Square().Mod(scalarOrder)
+            let yInv2 = 
+                Seq.init (i + 1) ignore 
+                |> Seq.fold 
+                    (fun (acc: BigInteger) _ -> acc.Square().Mod(scalarOrder))
+                    yInv
 
             InnerProductRealProve g geng genh aArr bArr yInv2 ux halfwidth commit
             |> outPts.AddRange
