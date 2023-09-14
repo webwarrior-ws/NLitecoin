@@ -158,10 +158,6 @@ let ScalarDotProduct (vec1: array<BigInteger>, vec2: array<BigInteger>) : BigInt
 // port of https://github.com/litecoin-project/litecoin/blob/5ac781487cc9589131437b23c69829f04002b97e/src/secp256k1-zkp/src/scalar.h#L114
 let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
     let seed32 = seed.ToBytes() |> Array.chunkBySize 4 |> Array.map BitConverter.ToUInt32
-    let mutable x = Array.zeroCreate<uint32> 16
-    let mutable r1 = None
-    let mutable r2 = None
-    let mutable overCount = 0u
 
     let inline LE32 p =
         if BitConverter.IsLittleEndian then
@@ -177,7 +173,7 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
 
     let inline ROTL32(x: uint32, n) = ((x) <<< (n)) ||| ((x) >>> (32-(n)))
 
-    let QUARTERROUND (a,b,c,d) = 
+    let QUARTERROUND (x: array<uint32>) (a,b,c,d) = 
         x.[a] <- x.[a] + x.[b]
         x.[d] <- ROTL32(x.[d] ^^^ x.[a], 16)
         x.[c] <- x.[c] + x.[d]
@@ -199,8 +195,8 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
         else
             Some result
 
-    while (r1.IsNone || r2.IsNone) do
-        x <- [|
+    let rec produceScalars (overCount: uint32) : BigInteger * BigInteger =
+        let x = [|
             0x61707865u
             0x3320646eu
             0x79622d32u
@@ -220,16 +216,16 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
         |]
 
         for _=1 to 10 do
-            QUARTERROUND(0, 4, 8,12)
-            QUARTERROUND(1, 5, 9,13)
-            QUARTERROUND(2, 6,10,14)
-            QUARTERROUND(3, 7,11,15)
-            QUARTERROUND(0, 5,10,15)
-            QUARTERROUND(1, 6,11,12)
-            QUARTERROUND(2, 7, 8,13)
-            QUARTERROUND(3, 4, 9,14)
+            QUARTERROUND x (0, 4, 8,12)
+            QUARTERROUND x (1, 5, 9,13)
+            QUARTERROUND x (2, 6,10,14)
+            QUARTERROUND x (3, 7,11,15)
+            QUARTERROUND x (0, 5,10,15)
+            QUARTERROUND x (1, 6,11,12)
+            QUARTERROUND x (2, 7, 8,13)
+            QUARTERROUND x (3, 4, 9,14)
 
-        x <- 
+        let x = 
             Array.map2
                 (+)
                 x
@@ -251,7 +247,7 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
                     0u
                     overCount
                 |]
-        r1 <-
+        let r1 =
             [| 
                 BE32(uint64 x.[6]) <<< 32 ||| BE32(uint64 x.[7])
                 BE32(uint64 x.[4]) <<< 32 ||| BE32(uint64 x.[5])
@@ -259,7 +255,7 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
                 BE32(uint64 x.[0]) <<< 32 ||| BE32(uint64 x.[1])
             |]
             |> createScalar
-        r2 <-
+        let r2 =
             [|
                 BE32(uint64 x.[14]) <<< 32 ||| BE32(uint64 x.[15])
                 BE32(uint64 x.[12]) <<< 32 ||| BE32(uint64 x.[13])
@@ -268,9 +264,11 @@ let ScalarChaCha20 (seed: uint256) (index: uint64) : BigInteger * BigInteger =
             |]
             |> createScalar
 
-        overCount <- overCount + 1u
+        match r1, r2 with
+        | Some sc1, Some sc2 -> sc1, sc2
+        | _ -> produceScalars (overCount + 1u)
 
-    r1.Value, r2.Value
+    produceScalars 0u
 
 let UpdateCommit (commit: uint256) (lpt: ECPoint) (rpt: ECPoint) : uint256 =
     let lpt = lpt.Normalize()
@@ -308,11 +306,16 @@ let private LrGenerate
     (value: uint64) 
     (x: BigInteger)
     : seq<BigInteger * BigInteger> =
-    let mutable z22n = z.Square()
-    let mutable yn = BigInteger.One
+    let initailState = 
+        {| 
+            Result = (BigInteger.Zero, BigInteger.Zero)
+            Z22n = z.Square() 
+            Yn = BigInteger.One
+        |}
 
-    seq {
-        for bitIdx=0 to nbits-1 do
+    Seq.init nbits id
+    |> Seq.scan 
+        (fun (state : {| Result: (BigInteger * BigInteger); Yn: BigInteger; Z22n: BigInteger |}) bitIdx ->
             let bit = int64((value >>> bitIdx) &&& 1UL)
             let count = bitIdx
             
@@ -321,13 +324,17 @@ let private LrGenerate
             let ar = BigInteger.ValueOf(1L - bit).Negate()
 
             let lOut = al.Subtract(z).Add(sl.Multiply x)
-            let rOut = ar.Add(z).Add(sr.Multiply x).Multiply(yn).Add(z22n)
+            let rOut = ar.Add(z).Add(sr.Multiply x).Multiply(state.Yn).Add(state.Z22n)
 
-            yn <- yn.Multiply y
-            z22n <- z22n.Add z22n 
-
-            yield lOut.Mod scalarOrder, rOut.Mod scalarOrder
-    }
+            {| 
+                Result = (lOut.Mod scalarOrder, rOut.Mod scalarOrder)
+                Yn = state.Yn.Multiply(y).Mod(scalarOrder) 
+                Z22n = state.Z22n.Add(state.Z22n).Mod(scalarOrder) 
+            |})
+        initailState
+    |> Seq.map (fun state -> state.Result)
+    // skip first value since it's a copy of initailState
+    |> Seq.skip 1
 
 let IP_AB_SCALARS = 4
 
@@ -610,17 +617,22 @@ let ConstructRangeProof
 
     // Compute A and S
     let aL = Array.init nbits (fun i -> (amount &&& (1UL <<< i)) <> 0UL )
-    let mutable a = generatorG.Multiply alpha
-    let mutable s = generatorG.Multiply rho
-    for j=0 to nbits - 1 do
-        let sl, sr = ScalarChaCha20 rewindNonce (uint64(j + 2))
-        let aterm = 
-            if aL.[j] then 
-                generators.[j] 
-            else 
-                generators.[j + generators.Length / 2].Negate()
-        a <- a.Add aterm
-        s <- s.Add(generators.[j].Multiply sl).Add(generators.[j + generators.Length / 2].Multiply sr)
+
+    let a =
+        let aterms = 
+            Seq.init nbits (fun j -> 
+                if aL.[j] then 
+                    generators.[j] 
+                else 
+                    generators.[j + generators.Length / 2].Negate())
+        Seq.fold (fun (acc: ECPoint) p -> acc.Add p) (generatorG.Multiply alpha) aterms
+    
+    let s = 
+        let sterms =
+            Seq.init nbits (fun j -> 
+                let sl, sr = ScalarChaCha20 rewindNonce (uint64(j + 2))
+                generators.[j].Multiply(sl).Add(generators.[j + generators.Length / 2].Multiply sr))
+        Seq.fold (fun (acc: ECPoint) p -> acc.Add p) (generatorG.Multiply rho) sterms
 
     // get challenges y and z
     let outPt0 = a
@@ -713,7 +725,8 @@ let ConstructRangeProof
     
     let innerProductProofOffset = 64 + 128 + 1
     let innerProductProofLength = InnerProductProofLength nbits
-    Array.blit innerProductProof 0 proof innerProductProofOffset innerProductProofLength
     assert(innerProductProofLength + innerProductProofOffset = RangeProof.Size)
-    assert(proof.Length = RangeProof.Size)
+
+    Array.blit innerProductProof 0 proof innerProductProofOffset innerProductProofLength
+    
     RangeProof proof
