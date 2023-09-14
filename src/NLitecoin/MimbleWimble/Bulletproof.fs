@@ -534,47 +534,38 @@ let InnerProductProve
     (recurse: bool)  =
     let proofLen = InnerProductProofLength n
         
-    if n <= IP_AB_SCALARS / 2 then
-        // Special-case lengths 0 and 1 whose proofs are just explicit lists of scalars
-        let a, b = lrSequence |> Seq.take (IP_AB_SCALARS / 2) |> Seq.toArray |> Array.unzip
-        let dot = ScalarDotProduct(a, b)
-        dot.ToUInt256().ToBytes().CopyTo proof
-        for i=0 to n-1 do
-            a.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * (i + 1)))
-            b.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * (i + n + 1)))
-    else
-        let aArr, bArr = lrSequence |> Seq.take n |> Seq.toArray |> Array.unzip
-        let geng = generators |> Array.take n
-        let genh = generators |> Array.skip (generators.Length / 2) |> Array.take n
+    let aArr, bArr = lrSequence |> Seq.take n |> Seq.toArray |> Array.unzip
+    let geng = generators |> Array.take n
+    let genh = generators |> Array.skip (generators.Length / 2) |> Array.take n
 
-        // Record final dot product
-        let dot = ScalarDotProduct(aArr, bArr)
-        dot.ToUInt256().ToBytes().CopyTo proof
+    // Record final dot product
+    let dot = ScalarDotProduct(aArr, bArr)
+    dot.ToUInt256().ToBytes().CopyTo proof
             
-        // Protocol 2: hash dot product to obtain G-randomizer
-        let commit = 
-            let hasher = Sha256Digest()
-            hasher.BlockUpdate(commitInp, 0, commitInp.Length)
-            hasher.BlockUpdate(proof.ToArray(), 0, 32)
-            let bytes = Array.zeroCreate<byte> 32
-            hasher.DoFinal(bytes, 0) |> ignore
-            bytes
+    // Protocol 2: hash dot product to obtain G-randomizer
+    let commit = 
+        let hasher = Sha256Digest()
+        hasher.BlockUpdate(commitInp, 0, commitInp.Length)
+        hasher.BlockUpdate(proof.ToArray(), 0, 32)
+        let bytes = Array.zeroCreate<byte> 32
+        hasher.DoFinal(bytes, 0) |> ignore
+        bytes
 
-        let proof = proof.Slice 32
+    let proof = proof.Slice 32
         
-        let ux = (BigInteger.FromByteArrayUnsigned commit).Mod(scalarOrder)
+    let ux = (BigInteger.FromByteArrayUnsigned commit).Mod(scalarOrder)
 
-        let outPts = InnerProductRealProve generatorG geng genh aArr bArr yInv ux n (uint256 commit) recurse
+    let outPts = InnerProductRealProve generatorG geng genh aArr bArr yInv ux n (uint256 commit) recurse
 
-        // Final a/b values
-        let halfNAB = min (IP_AB_SCALARS / 2) n
-        for i=0 to halfNAB-1 do
-            aArr.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * i))
-            bArr.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * (i + halfNAB)))
+    // Final a/b values
+    let halfNAB = min (IP_AB_SCALARS / 2) n
+    for i=0 to halfNAB-1 do
+        aArr.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * i))
+        bArr.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * (i + halfNAB)))
         
-        let proof = proof.Slice(64 * halfNAB)
+    let proof = proof.Slice(64 * halfNAB)
 
-        SerializePoints outPts proof
+    SerializePoints outPts proof
 
     proofLen
 
