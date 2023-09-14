@@ -111,24 +111,29 @@ let TestRangeProofCanBeVerified
     (amount: uint64) 
     (key: uint256) 
     (privateNonce: uint256) 
-    (rewindNonce: uint256) =
+    (rewindNonce: uint256)
+    (extraData: Option<array<byte>>) =
     
     let commit = 
         match Pedersen.Commit (int64 amount) (BlindingFactor <| key) with
         | PedersenCommitment num -> num.Data
 
     let proofMessage = Array.zeroCreate 20
-    let proof = Bulletproof.ConstructRangeProof amount key privateNonce rewindNonce proofMessage None
+    let proof = Bulletproof.ConstructRangeProof amount key privateNonce rewindNonce proofMessage extraData
     let proofData = 
         match proof with
         | RangeProof data -> data
     
+    let extraDataAsNullable =
+        match extraData with
+        | Some array -> array
+        | None -> null
+
     use secp256k1ZKPBulletProof = new Secp256k1ZKpBulletproof()
     // argument names are wrong here: 3rd param should be rewindNonce and 4th nonce
-    //let proofZKP = secp256k1ZKPBulletProof.ProofSingle(amount, key.ToBytes(), rewindNonce.ToBytes(), privateNonce.ToBytes(), null, proofMessage)
+    //let proofZKP = secp256k1ZKPBulletProof.ProofSingle(amount, key.ToBytes(), rewindNonce.ToBytes(), privateNonce.ToBytes(), extraDataAsNullable, proofMessage)
 
-
-    secp256k1ZKPBulletProof.Verify(commit, proofData, null)
+    secp256k1ZKPBulletProof.Verify(commit, proofData, extraDataAsNullable)
 
 [<Test>]
 let TestInnerproductProofLength() =
