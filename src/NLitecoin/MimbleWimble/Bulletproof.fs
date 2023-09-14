@@ -425,6 +425,8 @@ let rec InnerProductRealProve
              |> Array.fold (fun (a : BigInteger)b -> a.Add b) BigInteger.Zero)
              .Multiply(ux).Mod(scalarOrder)
         
+        yInvN <- BigInteger.One
+
         outPts.Add(multMultivar (multCallbackLR 0 gSc) (n + 1))
 
         // R 
@@ -434,6 +436,7 @@ let rec InnerProductRealProve
              .Multiply(ux).Mod(scalarOrder)
 
         yInvN <- BigInteger.One
+
         outPts.Add(multMultivar (multCallbackLR 1 gSc) (n + 1))
 
         // x, x^2, x^-1, x^-2
@@ -713,7 +716,7 @@ let ConstructRangeProof
 
     // Compute l and r, do inner product proof
     let results = 
-        [ true; false ] 
+        [ false ] 
         |> List.map (fun recurse -> 
             let proofCopy = Array.copy proof
             let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount) 
@@ -729,8 +732,8 @@ let ConstructRangeProof
             proofCopy, innerProductProofLength
         )
 
-    let proof,innerProductProofLength = results.[1]
-    let diff = Array.map2 (fun x y -> x ^^^ y) (fst results.[0]) (fst results.[1])
+    let proof,innerProductProofLength = results.[0]
+    //let diff = Array.map2 (fun x y -> x ^^^ y) (fst results.[0]) (fst results.[1])
     let innerProductProofOffset = 64 + 128 + 1
     assert(innerProductProofLength + innerProductProofOffset = RangeProof.Size)
     assert(proof.Length = RangeProof.Size)

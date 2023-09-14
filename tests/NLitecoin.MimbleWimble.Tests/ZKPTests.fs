@@ -106,28 +106,12 @@ let TestAddBlindingFactors (positive: array<BlindingFactor>) (negative: array<Bl
     let ourSum = Pedersen.AddBlindingFactors positive negative
     ourSum.ToUInt256().ToBytes() = referenceSum
 
-[<Ignore("Temporarily disable failing test to make sure CI is green otherwise")>]
-[<Property(Arbitrary=[|typeof<ByteArray32Generators>|], MaxTest=10)>]
+[<Property(Arbitrary=[|typeof<ByteArray32Generators>|], MaxTest=20)>]
 let TestRangeProofCanBeVerified 
     (amount: uint64) 
     (key: uint256) 
     (privateNonce: uint256) 
     (rewindNonce: uint256) =
-    
-    let rewindNonce = 
-        "6d79206b696e67646f6d20666f7220736f6d652072616e646f6d6e6573732121"
-        |> Convert.FromHexString
-        |> uint256
-    
-    let privateNonce = rewindNonce
-   
-    let key = 
-        "09c9f12c4c568bc2b049784d03f4a0e1d56b94e8f1743c4f8773eada577c437c"
-        |> Convert.FromHexString
-        |> uint256
-    let amount = 0UL 
-    
-    //123456UL
     
     let commit = 
         match Pedersen.Commit (int64 amount) (BlindingFactor <| key) with
@@ -141,9 +125,8 @@ let TestRangeProofCanBeVerified
     
     use secp256k1ZKPBulletProof = new Secp256k1ZKpBulletproof()
     // argument names are wrong here: 3rd param should be rewindNonce and 4th nonce
-    let proofZKP = secp256k1ZKPBulletProof.ProofSingle(amount, key.ToBytes(), rewindNonce.ToBytes(), privateNonce.ToBytes(), null, proofMessage)
+    //let proofZKP = secp256k1ZKPBulletProof.ProofSingle(amount, key.ToBytes(), rewindNonce.ToBytes(), privateNonce.ToBytes(), null, proofMessage)
 
-    let diff = Array.map2 (^^^) proofData proofZKP.proof
 
     secp256k1ZKPBulletProof.Verify(commit, proofData, null)
 
