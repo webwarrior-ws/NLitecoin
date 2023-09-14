@@ -356,7 +356,6 @@ let rec InnerProductRealProve
     (ux: BigInteger)
     (n: int)
     (commit: uint256) 
-    (recurse: bool)
     : array<ECPoint> =
     let SECP256K1_BULLETPROOF_MAX_DEPTH = 31
     let x = Array.create SECP256K1_BULLETPROOF_MAX_DEPTH BigInteger.Zero
@@ -365,8 +364,6 @@ let rec InnerProductRealProve
     let outPts = ResizeArray<ECPoint>()
     let mutable commit = commit
 
-    let mutable pfDataGeng = geng
-    let mutable pfDataGenh = genh
     let mutable keepIterating = true
     
     // Protocol 1: Iterate, halving vector size until it is 1
@@ -396,9 +393,9 @@ let rec InnerProductRealProve
                         let pt, sc =
                             if idx / grouping % 2 = odd then
                                 let sc = bArr.[abIdx].Multiply yInvN
-                                pfDataGenh.[idx], sc
+                                genh.[idx], sc
                             else
-                                pfDataGeng.[idx], aArr.[abIdx]
+                                geng.[idx], aArr.[abIdx]
                         // step 3
                         let mutable sc = sc
                         let groupings = 
@@ -460,9 +457,10 @@ let rec InnerProductRealProve
             bArr.[j] <- bArr.[2*j].Add(bArr.[2*j+1].Multiply x.[i]).Mod(scalarOrder)
         
         // Combine G generators and recurse, if that would be more optimal
-        // This optimization is enabled by passing setting passing recurse=true.
-        // Not working correctly at the moment.
-        if recurse && (n > 32 && i = 1) then
+        if n > 32 && i = 1 then
+            let mutable pfDataGeng = geng
+            let mutable pfDataGenh = genh
+
             let getGPointsAndScalars () =
                 seq {
                     for idx in Seq.initInfinite id do
@@ -470,7 +468,7 @@ let rec InnerProductRealProve
                         let mutable sc = BigInteger.One
                         let indices = 
                             Seq.initInfinite id
-                            |> Seq.takeWhile (fun i -> 1 <<< i < grouping)
+                            |> Seq.takeWhile (fun i -> (1 <<< i) <= grouping)
                         for i in indices do
                             if idx &&& (1 <<< i) <> 0 then
                                 sc <- sc.Multiply x.[i]
@@ -487,7 +485,7 @@ let rec InnerProductRealProve
                         let mutable sc = BigInteger.One
                         let indices = 
                             Seq.initInfinite id
-                            |> Seq.takeWhile (fun i -> 1 <<< i < grouping)
+                            |> Seq.takeWhile (fun i -> (1 <<< i) <= grouping)
                         for i in indices do
                             if idx &&& (1 <<< i) <> 0 then
                                 sc <- sc.Multiply xInv.[i]
@@ -508,10 +506,9 @@ let rec InnerProductRealProve
             
             let mutable yInv2 = yInv.Square()
             for _=0 to i-1 do
-                yInv2 <- yInv2.Square()
-            yInv2 <- yInv2.Mod(scalarOrder)
+                yInv2 <- yInv2.Square().Mod(scalarOrder)
 
-            InnerProductRealProve g geng genh aArr bArr yInv2 ux halfwidth commit recurse
+            InnerProductRealProve g geng genh aArr bArr yInv2 ux halfwidth commit
             |> outPts.AddRange
             // break
             keepIterating <- false
@@ -532,8 +529,7 @@ let InnerProductProve
     (yInv: BigInteger) 
     (n: int) 
     (lrSequence: seq<BigInteger * BigInteger>)
-    (commitInp: array<byte>)
-    (recurse: bool)  =
+    (commitInp: array<byte>) =
     let proof = Array.zeroCreate<byte>(InnerProductProofLength n)
         
     let aArr, bArr = lrSequence |> Seq.take n |> Seq.toArray |> Array.unzip
@@ -557,7 +553,7 @@ let InnerProductProve
         
     let ux = (BigInteger.FromByteArrayUnsigned commit).Mod(scalarOrder)
 
-    let outPts = InnerProductRealProve generatorG geng genh aArr bArr yInv ux n (uint256 commit) recurse
+    let outPts = InnerProductRealProve generatorG geng genh aArr bArr yInv ux n (uint256 commit)
 
     // Final a/b values
     let halfNAB = min (IP_AB_SCALARS / 2) n
@@ -713,19 +709,14 @@ let ConstructRangeProof
         hash
 
     // Compute l and r, do inner product proof
-    let results = 
-        [ false ] 
-        |> List.map (fun recurse -> 
-            let lrSequence = LrGenerate rewindNonce y z nbits amount x
-            let y = y.ModInverse scalarOrder
-            InnerProductProve generators y nbits lrSequence commit recurse
-        )
-
-    //let diff = Array.map2 (fun x y -> x ^^^ y) results.[0] results.[1]
-
+    let innerProductProof = 
+        let lrSequence = LrGenerate rewindNonce y z nbits amount x
+        let y = y.ModInverse scalarOrder
+        InnerProductProve generators y nbits lrSequence commit
+    
     let innerProductProofOffset = 64 + 128 + 1
     let innerProductProofLength = InnerProductProofLength nbits
-    Array.blit results.[0] 0 proof innerProductProofOffset innerProductProofLength
+    Array.blit innerProductProof 0 proof innerProductProofOffset innerProductProofLength
     assert(innerProductProofLength + innerProductProofOffset = RangeProof.Size)
     assert(proof.Length = RangeProof.Size)
     RangeProof proof
