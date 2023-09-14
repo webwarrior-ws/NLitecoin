@@ -525,14 +525,13 @@ let InnerProductProofLength (n: int) =
         32 * (1 + 2 * (bitCount - 1 + int log) + IP_AB_SCALARS) + int(2u * log + 7u) / 8
 
 let InnerProductProve 
-    (proof: Span<byte>) 
     (generators: array<ECPoint>) 
     (yInv: BigInteger) 
     (n: int) 
     (lrSequence: seq<BigInteger * BigInteger>)
     (commitInp: array<byte>)
     (recurse: bool)  =
-    let proofLen = InnerProductProofLength n
+    let proof = Array.zeroCreate<byte>(InnerProductProofLength n)
         
     let aArr, bArr = lrSequence |> Seq.take n |> Seq.toArray |> Array.unzip
     let geng = generators |> Array.take n
@@ -540,18 +539,18 @@ let InnerProductProve
 
     // Record final dot product
     let dot = ScalarDotProduct(aArr, bArr)
-    dot.ToUInt256().ToBytes().CopyTo proof
+    dot.ToUInt256().ToBytes().CopyTo (proof.AsSpan())
             
     // Protocol 2: hash dot product to obtain G-randomizer
     let commit = 
         let hasher = Sha256Digest()
         hasher.BlockUpdate(commitInp, 0, commitInp.Length)
-        hasher.BlockUpdate(proof.ToArray(), 0, 32)
+        hasher.BlockUpdate(proof, 0, 32)
         let bytes = Array.zeroCreate<byte> 32
         hasher.DoFinal(bytes, 0) |> ignore
         bytes
 
-    let proof = proof.Slice 32
+    let proofSlice = proof.AsSpan().Slice 32
         
     let ux = (BigInteger.FromByteArrayUnsigned commit).Mod(scalarOrder)
 
@@ -560,14 +559,14 @@ let InnerProductProve
     // Final a/b values
     let halfNAB = min (IP_AB_SCALARS / 2) n
     for i=0 to halfNAB-1 do
-        aArr.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * i))
-        bArr.[i].ToUInt256().ToBytes().CopyTo(proof.Slice(32 * (i + halfNAB)))
+        aArr.[i].ToUInt256().ToBytes().CopyTo(proofSlice.Slice(32 * i))
+        bArr.[i].ToUInt256().ToBytes().CopyTo(proofSlice.Slice(32 * (i + halfNAB)))
         
-    let proof = proof.Slice(64 * halfNAB)
+    let proofSlice = proofSlice.Slice(64 * halfNAB)
 
-    SerializePoints outPts proof
+    SerializePoints outPts proofSlice
 
-    proofLen
+    proof
 
 let ConstructRangeProof 
     (amount: uint64) 
@@ -718,18 +717,16 @@ let ConstructRangeProof
             let lrSequence = 
                 let lrGen = LrGenerator(rewindNonce, y, z, nbits, amount) 
                 Seq.init nbits (fun _ -> lrGen.Generate x)
-
-            let innerProductProofOffset = 64 + 128 + 1
     
             let y = y.ModInverse scalarOrder
-            let innerProductProofLength = 
-                InnerProductProve (proofCopy.AsSpan().Slice innerProductProofOffset) generators y nbits lrSequence commit recurse
-            proofCopy, innerProductProofLength
+            InnerProductProve generators y nbits lrSequence commit recurse
         )
 
-    let proof,innerProductProofLength = results.[0]
-    //let diff = Array.map2 (fun x y -> x ^^^ y) (fst results.[0]) (fst results.[1])
+    //let diff = Array.map2 (fun x y -> x ^^^ y) results.[0] results.[1]
+
     let innerProductProofOffset = 64 + 128 + 1
+    let innerProductProofLength = InnerProductProofLength nbits
+    Array.blit results.[0] 0 proof innerProductProofOffset innerProductProofLength
     assert(innerProductProofLength + innerProductProofOffset = RangeProof.Size)
     assert(proof.Length = RangeProof.Size)
     RangeProof proof
