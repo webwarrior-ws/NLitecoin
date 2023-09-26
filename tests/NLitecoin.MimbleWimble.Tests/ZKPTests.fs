@@ -146,7 +146,7 @@ let TestInnerproductProofLength() =
             Assert.AreEqual(referenceLength, uint64 ourLength)
     with
     | :? System.EntryPointNotFoundException ->
-        Assert.Ignore "no secp256k1_bulletproof_innerproduct_proof_length in libsecp256k1 on Linux"
+        Assert.Inconclusive "no secp256k1_bulletproof_innerproduct_proof_length in libsecp256k1 on Linux"
 
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
 let TestGeneratorGenerate(key: array<byte>) =
