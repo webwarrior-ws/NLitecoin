@@ -60,11 +60,36 @@ type private Secp256k1ZKpBulletproof() =
         Marshal.FreeHGlobal gen
         output
 
-[<Ignore("Unable to find an entry point named 'secp256k1_schnorrsig_sign' in DLL 'libsecp256k1'")>]
-[<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
-let TestSchnorrSign (message: array<byte>) (key: array<byte>) =
-    use secp256k1Schnorr = new Secp256k1ZKP.Net.Schnorr()
-    (EC.SchnorrSign key message).ToBytes() = secp256k1Schnorr.Sign(message, key)
+[<Test>]
+let TestSchnorrSign () =
+    let test message key expected =
+        let signature = (SchnorrSign key message).ToBytes()
+        Assert.AreEqual(expected, signature)
+
+    // Test vectors (see https://github.com/litecoin-project/litecoin/blob/5ac781487cc9589131437b23c69829f04002b97e/src/secp256k1-zkp/src/modules/schnorrsig/tests_impl.h#L168)
+    let key1 = Array.zeroCreate 32 |> Array.updateAt 31 1uy
+    let msg1 = Array.zeroCreate 32
+    let expected1 = 
+        "787A848E71043D280C50470E8E1532B2DD5D20EE912A45DBDD2BD1DFBF187EF67031A98831859DC34DFFEEDDA86831842CCD0079E1F92AF177F7F22CC1DCED05"
+        |> Convert.FromHexString
+    
+    test msg1 key1 expected1
+
+    let key2 = "B7E151628AED2A6ABF7158809CF4F3C762E7160F38B4DA56A784D9045190CFEF" |> Convert.FromHexString
+    let msg2 = "243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89" |> Convert.FromHexString
+    let expected2 = 
+        "2A298DACAE57395A15D0795DDBFD1DCB564DA82B0F269BC70A74F8220429BA1D1E51A22CCEC35599B8F266912281F8365FFC2D035A230434A1A64DC59F7013FD"
+        |> Convert.FromHexString
+
+    test msg2 key2 expected2
+
+    let key3 = "C90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B14E5C7" |> Convert.FromHexString
+    let msg3 = "5E2D58D8B3BCDF1ABADEC7829054F90DDA9805AAB56C77333024B9D0A508B75C" |> Convert.FromHexString
+    let expected3 = 
+        "00DA9B08172A9B6F0466A2DEFD817F2D7AB437E0D253CB5395A963866B3574BE00880371D01766935B92D2AB4CD5C8A2A5837EC57FED7660773A05F0DE142380"
+        |> Convert.FromHexString
+
+    test msg3 key3 expected3
 
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
 let TestPedersenCommit (value: uint64) (blind: BlindingFactor) =
