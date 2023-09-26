@@ -7,6 +7,8 @@ open Org.BouncyCastle.Math
 
 open EC
 
+type Coin = NLitecoin.MimbleWimble.Coin
+
 type private Inputs =
     {
         TotalBlind: BlindingFactor
@@ -19,7 +21,13 @@ type private Outputs =
         TotalBlind: BlindingFactor
         TotalKey: uint256
         Outputs: array<Output>
-        Coins: array<NLitecoin.MimbleWimble.Coin>
+        Coins: array<Coin>
+    }
+
+type TransactionBuildResult =
+    {
+        Transaction: Transaction
+        OutputCoins: array<Coin>
     }
 
 /// Creates a standard input with a stealth key (feature bit = 1)// Creates a standard input with a stealth key (feature bit = 1)
@@ -227,3 +235,63 @@ let private CreateOutputs (recipients: seq<Recipient>) : Outputs =
         Outputs = outputs
         Coins = coins
     }
+
+let private CreateKernel
+    (blind: BlindingFactor) 
+    (stealthBlind: BlindingFactor) 
+    (fee: CAmount)
+    (peginAmount: Option<CAmount>)
+    (pegouts: array<PegOutCoin>) 
+    : Kernel =
+    let featuresByte =
+        (if fee > 0L then KernelFeatures.FEE_FEATURE_BIT else enum 0) |||
+        (match peginAmount with 
+            | Some value when value > 0L -> KernelFeatures.PEGIN_FEATURE_BIT 
+            | _ -> enum 0) |||
+        (if pegouts.Length > 0 then KernelFeatures.PEGOUT_FEATURE_BIT else enum 0) |||
+        KernelFeatures.STEALTH_EXCESS_FEATURE_BIT
+
+    let excessCommit = Pedersen.Commit 0L blind
+
+    let stealthExcess = stealthBlind.ToUInt256().ToBytes()
+
+    let sigKey =
+        let hasher = Hasher()
+        hasher.Append excessCommit
+        hasher.Write stealthExcess
+        NBitcoin.Secp256k1.ECPrivKey.Create(blind.ToUInt256().ToBytes())
+            .TweakMul(hasher.Hash().ToBytes())
+            .TweakAdd(stealthBlind.ToUInt256().ToBytes())
+
+    failwith "not yet implemented"
+
+let BuildTransaction 
+    (inputCoins: array<Coin>)
+    (recipients: array<Recipient>)
+    (pegouts: array<PegOutCoin>)
+    (peginAmount: Option<CAmount>)
+    (fee: CAmount)
+    : TransactionBuildResult =
+    let pegoutTotal = pegouts |> Array.sumBy (fun pegout -> pegout.Amount)
+    let recipientTotal = recipients |> Array.sumBy (fun recipient -> recipient.Amount)
+
+    if (inputCoins |> Array.sumBy (fun coin -> coin.Amount)) + (Option.defaultValue 0L peginAmount) <>
+        pegoutTotal + recipientTotal + fee then
+        failwith "insufficient funds" // TODO: proper exception
+
+    let inputs = CreateInputs inputCoins
+    let outputs = CreateOutputs recipients
+
+    // Total kernel offset is split between raw kernel_offset and the kernel's blinding factor.
+    // sum(output.blind) - sum(input.blind) = kernel_offset + sum(kernel.blind)
+    let kernelOffset = NBitcoin.RandomUtils.GetUInt256() |> BlindingFactor
+    let kernelBlind = 
+        Pedersen.AddBlindingFactors
+            [| outputs.TotalBlind |]
+            [| inputs.TotalBlind; kernelOffset |]
+
+    let stealthBlind = NBitcoin.RandomUtils.GetUInt256() |> BlindingFactor
+
+    let kernel = CreateKernel kernelBlind stealthBlind fee peginAmount pegouts
+
+    failwith "not yet implemented"
