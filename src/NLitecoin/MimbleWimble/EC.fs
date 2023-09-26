@@ -4,6 +4,7 @@ open Org.BouncyCastle.Crypto.Parameters
 open Org.BouncyCastle.Asn1.X9
 open Org.BouncyCastle.Math
 open Org.BouncyCastle.Math.EC
+open Org.BouncyCastle.Crypto.Digests
 
 let curve = ECNamedCurveTable.GetByName("secp256k1")
 let domainParams = new ECDomainParameters(curve.Curve, curve.G, curve.N, curve.H, curve.GetSeed())
@@ -29,10 +30,6 @@ let generatorJPub =
                 0x29uy; 0x54uy; 0xf4uy; 0x9buy; 0x7euy; 0x39uy; 0x8buy; 0x8duy;
                 0x2auy; 0x01uy; 0x93uy; 0x93uy; 0x36uy; 0x21uy; 0x15uy; 0x5fuy; |]
 
-let SchnorrSign (key: array<byte>) (msgHash: array<byte>) =
-    // is this the right one?
-    NBitcoin.Secp256k1.ECPrivKey.Create(key).SignBIP340(msgHash)
-
 type BigInteger with
     static member FromByteArrayUnsigned (bytes: array<byte>) =
         BigInteger(1, bytes)
@@ -41,43 +38,75 @@ type BigInteger with
         let bytes = self.ToByteArrayUnsigned()
         NBitcoin.uint256 (Array.append (Array.zeroCreate (32 - bytes.Length)) bytes)
 
+let private Jakobi (elem: ECFieldElement) =
+    let k = curve.Curve.Field.Characteristic
+    let n = elem.ToBigInteger()
+
+    // jacobi symbol calculation algorithm
+    let rec loop (n: BigInteger) (k: BigInteger) t =
+        if n = BigInteger.Zero then
+            n, k, t
+        else
+            let rec innerLoop (n: BigInteger) t =
+                if n.Mod BigInteger.Two <> BigInteger.Zero then
+                    n, t
+                else
+                    let n = n.Divide BigInteger.Two
+                    let r = k.Mod(BigInteger.ValueOf 8L)
+                    if r = BigInteger.Three || r = (BigInteger.ValueOf 5L) then
+                        innerLoop n -t
+                    else
+                        innerLoop n t
+            let n, t = innerLoop n t
+            
+            if k.Mod BigInteger.Four = BigInteger.Three 
+                && n.Mod BigInteger.Four = BigInteger.Three  then
+                loop (k.Mod n) n -t
+            else
+                loop (k.Mod n) n t
+
+    let _, k, t = loop n k 1
+
+    if k = BigInteger.One then
+        t
+    else
+        0
+
 // should be equivalent to https://github.com/litecoin-project/litecoin/blob/master/src/secp256k1-zkp/src/field_impl.h#L290
 let IsQuadVar (elem: ECFieldElement) =
     if isNull elem then
         false
     else
-        let k = curve.Curve.Field.Characteristic
-        let n = elem.ToBigInteger()
+        Jakobi elem >= 0
 
-        // jacobi symbol calculation algorithm
-        let rec loop (n: BigInteger) (k: BigInteger) t =
-            if n = BigInteger.Zero then
-                n, k, t
-            else
-                let rec innerLoop (n: BigInteger) t =
-                    if n.Mod BigInteger.Two <> BigInteger.Zero then
-                        n, t
-                    else
-                        let n = n.Divide BigInteger.Two
-                        let r = k.Mod(BigInteger.ValueOf 8L)
-                        if r = BigInteger.Three || r = (BigInteger.ValueOf 5L) then
-                            innerLoop n -t
-                        else
-                            innerLoop n t
-                let n, t = innerLoop n t
-            
-                if k.Mod BigInteger.Four = BigInteger.Three 
-                    && n.Mod BigInteger.Four = BigInteger.Three  then
-                    loop (k.Mod n) n -t
-                else
-                    loop (k.Mod n) n t
+let SchnorrSign (key: array<byte>) (msgHash: array<byte>) : Signature =
+    let k0 = 
+        let hasher = Sha256Digest()
+        hasher.BlockUpdate(key, 0, key.Length)
+        hasher.BlockUpdate(msgHash, 0, msgHash.Length)
+        let arr = Array.zeroCreate 32
+        hasher.DoFinal(arr, 0) |> ignore
+        BigInteger.FromByteArrayUnsigned(arr).Mod(scalarOrder)
 
-        let _, k, t = loop n k 1
-
-        let jacobi = 
-            if k = BigInteger.One then
-                t
-            else
-                0
+    if k0 = BigInteger.Zero then
+        failwith "Failure. This happens only with negligible probability."
     
-        jacobi >= 0
+    let keyScalar = BigInteger.FromByteArrayUnsigned key
+    assert(keyScalar < scalarOrder)
+
+    let R = generatorG.Multiply(k0).Normalize()
+    let k = if Jakobi R.AffineYCoord <> 1 then scalarOrder.Subtract k0 else k0
+    let e = 
+        let hasher = Sha256Digest()
+        hasher.BlockUpdate(R.AffineXCoord.GetEncoded(), 0, 32)
+        hasher.BlockUpdate(generatorG.Multiply(keyScalar).GetEncoded(true), 0, 33)
+        hasher.BlockUpdate(msgHash, 0, msgHash.Length)
+        let arr = Array.zeroCreate 32
+        hasher.DoFinal(arr, 0) |> ignore
+        BigInteger.FromByteArrayUnsigned(arr).Mod(scalarOrder)
+
+    Array.append 
+        (R.AffineXCoord.GetEncoded())
+        (k.Add(e.Multiply(keyScalar)).Mod(scalarOrder).ToUInt256().ToBytes())
+        |> BigInt
+        |> Signature

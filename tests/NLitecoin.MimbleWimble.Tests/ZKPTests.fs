@@ -63,8 +63,11 @@ type private Secp256k1ZKpBulletproof() =
 [<Test>]
 let TestSchnorrSign () =
     let test message key expected =
-        let signature = (SchnorrSign key message).ToBytes()
-        Assert.AreEqual(expected, signature)
+        let signature = SchnorrSign key message
+        let signatureBytes = 
+            match signature with
+            | Signature bigint -> bigint.Data
+        Assert.AreEqual(expected, signatureBytes)
 
     // Test vectors (see https://github.com/litecoin-project/litecoin/blob/5ac781487cc9589131437b23c69829f04002b97e/src/secp256k1-zkp/src/modules/schnorrsig/tests_impl.h#L168)
     let key1 = Array.zeroCreate 32 |> Array.updateAt 31 1uy

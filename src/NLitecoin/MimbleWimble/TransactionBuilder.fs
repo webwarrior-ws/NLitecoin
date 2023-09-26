@@ -54,7 +54,7 @@ let private CreateInput (outputId: Hash) (commitment: PedersenCommitment) (input
         Commitment = commitment
         InputPublicKey = Some inputPubKey
         OutputPublicKey = outputPubKey
-        Signature = Signature(schnorrSignature.ToBytes() |> BigInt)
+        Signature = schnorrSignature
         ExtraData = Array.empty
     }
 
@@ -182,8 +182,7 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
             hasher.Write (Hasher.CalculateHash(message).ToBytes())
             hasher.Write (Hasher.CalculateHash(rangeProof).ToBytes())
             let sigMessage = hasher.Hash()
-            let schnorrSignature = EC.SchnorrSign (senderPrivKey.ToBytes()) (sigMessage.ToBytes())
-            Signature(schnorrSignature.ToBytes() |> BigInt)
+            SchnorrSign (senderPrivKey.ToBytes()) (sigMessage.ToBytes())
 
         let blindOut = mask.PreBlind
         
