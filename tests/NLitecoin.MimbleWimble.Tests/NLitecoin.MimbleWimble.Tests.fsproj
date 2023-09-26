@@ -20,9 +20,11 @@
     <Content Include="transaction1.txt">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
+    <Compile Include="Validation.fs" />
     <Compile Include="TransactionTests.fs" />
     <Compile Include="SerializationTests.fs" />
     <Compile Include="ZKPTests.fs" />
+    <Compile Include="TransactionBuilderTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

@@ -18,6 +18,15 @@ let SerializeCommitment (commitment: ECPoint) =
     bytes.[0] <- 9uy ^^^ (if EC.IsQuadVar (commitment.Normalize().YCoord) then 1uy else 0uy)
     bytes
 
+let DeserializeCommitment (commitment: PedersenCommitment) : ECPoint =
+    let x = commitment.ToBytes() |> Array.skip 1 |> BigInteger.FromByteArrayUnsigned |> curve.Curve.FromBigInteger
+    let y = x.Square().Multiply(x).Add(curve.Curve.B).Sqrt()
+    let point = curve.Curve.CreatePoint(x.ToBigInteger(), y.ToBigInteger())
+    if commitment.ToBytes().[0] &&& 1uy <> 0uy then
+        point.Negate()
+    else
+        point
+
 /// Generates a pedersen commitment: *commit = blind * G + value * H. The blinding factor is 32 bytes.
 let Commit (value: CAmount) (blind: BlindingFactor) : PedersenCommitment =
     let result =
@@ -62,3 +71,13 @@ let AddBlindingFactors (positive: array<BlindingFactor>) (negative: array<Blindi
     
     result.ToUInt256()
     |> BlindingFactor
+
+let AddCommitments (positive: array<PedersenCommitment>) (negative: array<PedersenCommitment>) : PedersenCommitment =
+    let sum (commitments: array<PedersenCommitment>) = 
+        commitments
+        |> Array.map DeserializeCommitment
+        |> Array.fold (fun (a : ECPoint) b -> a.Add b) (generatorG.Multiply BigInteger.Zero)
+    
+    let result = (sum positive).Subtract(sum negative)
+    
+    result |> SerializeCommitment |> BigInt |> PedersenCommitment

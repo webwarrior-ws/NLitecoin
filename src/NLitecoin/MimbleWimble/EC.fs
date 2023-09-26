@@ -1,5 +1,7 @@
 ﻿module NLitecoin.MimbleWimble.EC
 
+open System
+
 open Org.BouncyCastle.Crypto.Parameters
 open Org.BouncyCastle.Asn1.X9
 open Org.BouncyCastle.Math
@@ -37,6 +39,12 @@ type BigInteger with
     member self.ToUInt256() =
         let bytes = self.ToByteArrayUnsigned()
         NBitcoin.uint256 (Array.append (Array.zeroCreate (32 - bytes.Length)) bytes)
+
+type NBitcoin.Secp256k1.ECPrivKey with
+    member self.ToBytes() =
+        let bytes = Array.zeroCreate 32
+        self.WriteToSpan(bytes.AsSpan())
+        bytes
 
 let private Jakobi (elem: ECFieldElement) =
     let k = curve.Curve.Field.Characteristic

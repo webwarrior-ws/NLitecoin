@@ -173,6 +173,10 @@ type PedersenCommitment =
     static member Read(stream: BitcoinStream) =
         PedersenCommitment(BigInt.Read stream PedersenCommitment.NumBytes)
 
+    member self.ToBytes() = 
+        match self with
+        | PedersenCommitment bigint -> bigint.Data
+
     interface ISerializeable with
         member self.Write(stream) =
             match self with
@@ -210,6 +214,7 @@ type OutputFeatures =
     | STANDARD_FIELDS_FEATURE_BIT = 0x01
     | EXTRA_DATA_FEATURE_BIT = 0x02
 
+[<CustomComparison; StructuralEquality>]
 type Input =
     {
         Features: InputFeatures
@@ -274,6 +279,16 @@ type Input =
                 writeByteArray stream self.ExtraData
 
             write stream self.Signature
+
+    interface IComparable<Input> with
+        member self.CompareTo(other) =
+            compare (Hasher.CalculateHash self) (Hasher.CalculateHash other)
+
+    interface IComparable with
+        member self.CompareTo(other) =
+            match other with
+            | :? Input as input -> (self :> IComparable<Input>).CompareTo input
+            | _ -> 0
 
 type OutputMessageStandardFields =
     {
@@ -367,15 +382,6 @@ type StealthAddress =
         ScanPubKey: PublicKey
         SpendPubKey: PublicKey
     }
-    static member Random() =
-        let scanPubKeyBytes = Array.zeroCreate PublicKey.NumBytes
-        NBitcoin.RandomUtils.Random.GetBytes scanPubKeyBytes
-        let spendPubKeyBytes = Array.zeroCreate PublicKey.NumBytes
-        NBitcoin.RandomUtils.Random.GetBytes spendPubKeyBytes
-        {
-            ScanPubKey = PublicKey(BigInt scanPubKeyBytes)
-            SpendPubKey = PublicKey(BigInt spendPubKeyBytes)
-        }
 
 type OutputMask =
     {
@@ -423,6 +429,7 @@ type OutputMask =
             self.NonceMask.Data
         |> BigInt
 
+[<CustomComparison; StructuralEquality>]
 type Output =
     {
         Commitment: PedersenCommitment
@@ -453,6 +460,16 @@ type Output =
             write stream self.Message
             write stream self.RangeProof
             write stream self.Signature
+
+    interface IComparable<Output> with
+        member self.CompareTo(other) =
+            compare (Hasher.CalculateHash self) (Hasher.CalculateHash other)
+
+    interface IComparable with
+        member self.CompareTo(other) =
+            match other with
+            | :? Output as output -> (self :> IComparable<Output>).CompareTo output
+            | _ -> 0
 
     member self.GetOutputID() : Hash =
         let hasher = Hasher()
@@ -502,6 +519,7 @@ type PegOutCoin =
             writeCAmount stream self.Amount
             stream.ReadWrite self.ScriptPubKey |> ignore
 
+[<CustomComparison; StructuralEquality>]
 type Kernel =
     {
         Features: KernelFeatures
@@ -576,6 +594,10 @@ type Kernel =
             Signature = signature
         }
 
+    member self.GetSupplyChange() : CAmount =
+        let pegOutAmount = self.Pegouts |> Array.sumBy (fun pegOut -> pegOut.Amount)
+        (self.Pegin |> Option.defaultValue 0L) - (self.Fee |> Option.defaultValue 0L) - pegOutAmount
+
     interface ISerializeable with
         member self.Write(stream) = 
             assert(stream.Serializing)
@@ -603,6 +625,16 @@ type Kernel =
 
             (self.Excess :> ISerializeable).Write stream
             (self.Signature :> ISerializeable).Write stream
+
+    interface IComparable<Kernel> with
+        member self.CompareTo(other) =
+            compare (Hasher.CalculateHash self) (Hasher.CalculateHash other)
+
+    interface IComparable with
+        member self.CompareTo(other) =
+            match other with
+            | :? Kernel as kernel -> (self :> IComparable<Kernel>).CompareTo kernel
+            | _ -> 0
 
 /// TRANSACTION BODY - Container for all inputs, outputs, and kernels in a transaction or block.
 type TxBody =
