@@ -5,6 +5,8 @@ open System
 open NBitcoin
 open Org.BouncyCastle.Math
 
+open EC
+
 type private Inputs =
     {
         TotalBlind: BlindingFactor
@@ -35,16 +37,16 @@ let private CreateInput (outputId: Hash) (commitment: PedersenCommitment) (input
 
     // Calculate aggregated key k_agg = k_i + HASH(K_i||K_o) * k_o
     let sigKey = 
-        BigInteger(outputKey.ToBytes())
-            .Multiply(BigInteger keyHash)
-            .Add(BigInteger(inputKey.ToBytes()))
+        BigInteger.FromByteArrayUnsigned(outputKey.ToBytes())
+            .Multiply(BigInteger.FromByteArrayUnsigned keyHash)
+            .Add(BigInteger.FromByteArrayUnsigned(inputKey.ToBytes()))
 
     let msgHasher = Hasher()
     //msgHasher.Append features
     msgHasher.Append outputId
     let msgHash = msgHasher.Hash().ToBytes()
 
-    let schnorrSignature = EC.SchnorrSign (sigKey.ToByteArrayUnsigned()) msgHash
+    let schnorrSignature = SchnorrSign (sigKey.ToByteArrayUnsigned()) msgHash
         
     {
         Features = features
@@ -97,15 +99,15 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
             hasher.Write (BitConverter.GetBytes value)
             hasher.Append n
             hasher.Hash().ToBytes()
-            |> BigInteger
+            |> BigInteger.FromByteArrayUnsigned
 
         let A =
             match receiverAddr.ScanPubKey with
-            | PublicKey pubKey -> BigInteger pubKey.Data
+            | PublicKey pubKey -> BigInteger.FromByteArrayUnsigned pubKey.Data
 
         let B =
             match receiverAddr.SpendPubKey with
-            | PublicKey pubKey -> BigInteger pubKey.Data
+            | PublicKey pubKey -> BigInteger.FromByteArrayUnsigned pubKey.Data
 
         // Derive shared secret 't' = H(T_derive, s*A)
         let sA = A.Multiply s
@@ -118,7 +120,7 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
         let Ko = 
             let hasher = Hasher(HashTags.OUT_KEY)
             hasher.Append t
-            B.Multiply(hasher.Hash().ToBytes() |> BigInteger);
+            B.Multiply(hasher.Hash().ToBytes() |> BigInteger.FromByteArrayUnsigned);
 
         // Key exchange public key 'Ke' = s*B
         let Ke = B.Multiply s
@@ -168,10 +170,34 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
                 (blind.ToUInt256()) 
                 (NBitcoin.RandomUtils.GetUInt256())
                 (NBitcoin.RandomUtils.GetUInt256())
-                (emptyProofMessage)
+                emptyProofMessage
                 (Some messageSerialized)
+        
+        // Sign the output
+        let signature =
+            let hasher = Hasher()
+            hasher.Append outputCommit
+            hasher.Write (Ks.ToBytes true) // ?
+            hasher.Write (Ko.ToByteArrayUnsigned())
+            hasher.Write (Hasher.CalculateHash(message).ToBytes())
+            hasher.Write (Hasher.CalculateHash(rangeProof).ToBytes())
+            let sigMessage = hasher.Hash()
+            let schnorrSignature = EC.SchnorrSign (senderPrivKey.ToBytes()) (sigMessage.ToBytes())
+            Signature(schnorrSignature.ToBytes() |> BigInt)
 
-        failwith "not implemented"
+        let blindOut = mask.PreBlind
+        
+        let output = 
+            {
+                Commitment = outputCommit
+                SenderPublicKey = PublicKey(Ks.ToBytes(true) |> BigInt)
+                ReceiverPublicKey = PublicKey(Ko.ToByteArrayUnsigned() |> BigInt)
+                Message = message
+                RangeProof = rangeProof
+                Signature = signature
+            }
+        
+        output, blindOut
 
 let private CreateOutputs (recipients: seq<Recipient>) : Outputs =
     let outputBlinds, outputs, coins = 
