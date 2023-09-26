@@ -77,9 +77,12 @@ type BlindingFactor =
 
 type Hash = 
     | Hash of uint256
-    member self.ToUint256() =
+    member self.ToUInt256() =
         match self with
         | Hash number -> number
+
+    member self.ToBytes() =
+        self.ToUInt256().ToBytes()
 
     static member Read(stream: BitcoinStream) : Hash =
         readUint256 stream |> Hash
@@ -390,18 +393,18 @@ type OutputMask =
         let preBlind = 
             let hasher = Hasher(HashTags.BLIND)
             hasher.Write(sharedSecret.ToBytes())
-            hasher.Hash().ToUint256()
+            hasher.Hash().ToUInt256()
             |> BlindingFactor.BlindingFactor
         let valueMask = 
             let hasher = Hasher(HashTags.VALUE_MASK)
             hasher.Write(sharedSecret.ToBytes())
-            hasher.Hash().ToUint256().ToBytes() 
+            hasher.Hash().ToBytes() 
             |> Array.take 8 
             |> BitConverter.ToUInt64
         let nonceMask =
             let hasher = Hasher(HashTags.NONCE_MASK)
             hasher.Write(sharedSecret.ToBytes())
-            hasher.Hash().ToUint256().ToBytes() 
+            hasher.Hash().ToBytes() 
             |> Array.take OutputMask.NonceMaskNumBytes 
             |> BigInt
         {

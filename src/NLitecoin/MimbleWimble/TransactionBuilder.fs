@@ -31,7 +31,7 @@ let private CreateInput (outputId: Hash) (commitment: PedersenCommitment) (input
     let keyHasher = Hasher()
     keyHasher.Append inputPubKey
     keyHasher.Append outputPubKey
-    let keyHash = keyHasher.Hash().ToUint256().ToBytes()
+    let keyHash = keyHasher.Hash().ToBytes()
 
     // Calculate aggregated key k_agg = k_i + HASH(K_i||K_o) * k_o
     let sigKey = 
@@ -42,7 +42,7 @@ let private CreateInput (outputId: Hash) (commitment: PedersenCommitment) (input
     let msgHasher = Hasher()
     //msgHasher.Append features
     msgHasher.Append outputId
-    let msgHash = msgHasher.Hash().ToUint256().ToBytes()
+    let msgHash = msgHasher.Hash().ToBytes()
 
     let schnorrSignature = EC.SchnorrSign (sigKey.ToByteArrayUnsigned()) msgHash
         
@@ -85,7 +85,7 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
         let n = 
             let hasher = Hasher(HashTags.NONCE)
             hasher.Write(senderPrivKey.ToBytes())
-            hasher.Hash().ToUint256().ToBytes()
+            hasher.Hash().ToBytes()
             |> Array.take 16
             |> BigInt
 
@@ -96,7 +96,7 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
             hasher.Append receiverAddr.SpendPubKey
             hasher.Write (BitConverter.GetBytes value)
             hasher.Append n
-            hasher.Hash().ToUint256().ToBytes()
+            hasher.Hash().ToBytes()
             |> BigInteger
 
         let A =
@@ -118,13 +118,13 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
         let Ko = 
             let hasher = Hasher(HashTags.OUT_KEY)
             hasher.Append t
-            B.Multiply(hasher.Hash().ToUint256().ToBytes() |> BigInteger);
+            B.Multiply(hasher.Hash().ToBytes() |> BigInteger);
 
         // Key exchange public key 'Ke' = s*B
         let Ke = B.Multiply s
 
         // Calc blinding factor and mask nonce and amount.
-        let mask = OutputMask.FromShared(t.ToUint256())
+        let mask = OutputMask.FromShared(t.ToUInt256())
         let blind = Pedersen.BlindSwitch mask.PreBlind (int64 value)
         let mv = mask.MaskValue value
         let mn = mask.MaskNonce n
@@ -139,7 +139,7 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
         let viewTag = 
             let hasher = Hasher(HashTags.TAG)
             hasher.Write(sA.ToByteArrayUnsigned())
-            hasher.Hash().ToUint256().ToBytes().[0]
+            hasher.Hash().ToBytes().[0]
 
         let message = 
             {
