@@ -8,6 +8,7 @@ open Org.BouncyCastle.Math
 open EC
 
 type Coin = NLitecoin.MimbleWimble.Coin
+type Transaction = NLitecoin.MimbleWimble.Transaction
 
 type private Inputs =
     {
@@ -263,7 +264,40 @@ let private CreateKernel
             .TweakMul(hasher.Hash().ToBytes())
             .TweakAdd(stealthBlind.ToUInt256().ToBytes())
 
-    failwith "not yet implemented"
+    let sigMessage = 
+        use byteStream = new IO.MemoryStream()
+        let stream = BitcoinStream(byteStream, true)
+        
+        stream.ReadWrite (featuresByte |> uint8) |> ignore
+        Helpers.write stream excessCommit
+        stream.ReadWriteAsVarInt (fee |> uint64 |> ref)
+        match peginAmount with
+        | Some amount -> stream.ReadWriteAsVarInt (amount |> uint64 |> ref)
+        | None -> ()
+        if pegouts.Length > 0 then
+            Helpers.writeArray stream pegouts
+        Helpers.write stream (BigInt stealthExcess)
+
+        let hasher = Hasher()
+        hasher.Write(byteStream.ToArray())
+        hasher.Hash()
+
+    let signature = 
+        let sigKeyBytes = Array.zeroCreate<byte> 32
+        sigKey.WriteToSpan sigKeyBytes
+        SchnorrSign sigKeyBytes (sigMessage.ToBytes())
+
+    {
+        Features = featuresByte
+        Fee = Some fee
+        Pegin = peginAmount
+        Pegouts = pegouts
+        LockHeight = None
+        StealthExcess = stealthExcess |> BigInt |> PublicKey |> Some
+        Excess = excessCommit
+        Signature = signature
+        ExtraData = Array.empty
+    }
 
 let BuildTransaction 
     (inputCoins: array<Coin>)
@@ -274,9 +308,9 @@ let BuildTransaction
     : TransactionBuildResult =
     let pegoutTotal = pegouts |> Array.sumBy (fun pegout -> pegout.Amount)
     let recipientTotal = recipients |> Array.sumBy (fun recipient -> recipient.Amount)
+    let inputTotal = inputCoins |> Array.sumBy (fun coin -> coin.Amount)
 
-    if (inputCoins |> Array.sumBy (fun coin -> coin.Amount)) + (Option.defaultValue 0L peginAmount) <>
-        pegoutTotal + recipientTotal + fee then
+    if inputTotal + (peginAmount |> Option.defaultValue 0L) <> pegoutTotal + recipientTotal + fee then
         failwith "insufficient funds" // TODO: proper exception
 
     let inputs = CreateInputs inputCoins
@@ -294,4 +328,24 @@ let BuildTransaction
 
     let kernel = CreateKernel kernelBlind stealthBlind fee peginAmount pegouts
 
-    failwith "not yet implemented"
+    let stealthOffset = 
+        Pedersen.AddBlindingFactors
+            [| BlindingFactor outputs.TotalKey; BlindingFactor inputs.TotalKey |]
+            [| stealthBlind |]
+
+    let transaction =
+        {
+            KernelOffset = kernelOffset
+            StealthOffset = stealthOffset
+            Body = 
+                {
+                    Inputs = inputs.Inputs |> Array.sort
+                    Outputs = outputs.Outputs |> Array.sort
+                    Kernels = Array.singleton kernel
+                }
+        }
+
+    {
+        Transaction = transaction
+        OutputCoins = outputs.Coins
+    }
