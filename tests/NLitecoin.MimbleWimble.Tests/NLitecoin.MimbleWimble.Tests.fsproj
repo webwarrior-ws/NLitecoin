@@ -20,7 +20,7 @@
     <Content Include="transaction1.txt">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
-    <Compile Include="TranactionTests.fs" />
+    <Compile Include="TransactionTests.fs" />
     <Compile Include="SerializationTests.fs" />
     <Compile Include="ZKPTests.fs" />
     <Compile Include="Program.fs" />
