@@ -173,6 +173,10 @@ type PedersenCommitment =
     static member Read(stream: BitcoinStream) =
         PedersenCommitment(BigInt.Read stream PedersenCommitment.NumBytes)
 
+    member self.ToBytes() = 
+        match self with
+        | PedersenCommitment bigint -> bigint.Data
+
     interface ISerializeable with
         member self.Write(stream) =
             match self with
@@ -598,6 +602,10 @@ type Kernel =
             Excess = excess
             Signature = signature
         }
+
+    member self.GetSupplyChange() : CAmount =
+        let pegOutAmount = self.Pegouts |> Array.sumBy (fun pegOut -> pegOut.Amount)
+        (self.Pegin |> Option.defaultValue 0L) - (self.Fee |> Option.defaultValue 0L) - pegOutAmount
 
     interface ISerializeable with
         member self.Write(stream) = 
