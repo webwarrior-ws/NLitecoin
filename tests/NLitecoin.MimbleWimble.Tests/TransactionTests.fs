@@ -24,6 +24,8 @@ let ParsePegInTransaction () =
     Assert.IsTrue(transaction.Body.Kernels.[0].Pegin.IsSome)
     Assert.IsEmpty(transaction.Body.Kernels.[0].Pegouts)
 
+    Validation.ValidateTransactionBody transaction.Body
+
 [<Test>]
 let ParseHogExTransaction () =
     let rawTransaction = IO.File.ReadAllText "transaction2.txt"
@@ -38,6 +40,8 @@ let ParseHogExTransaction () =
     Assert.IsTrue(transaction.Body.Kernels.[0].Pegin.IsNone)
     Assert.IsEmpty(transaction.Body.Kernels.[0].Pegouts)
 
+    Validation.ValidateTransactionBody transaction.Body
+
 [<Test>]
 let ParsePegOutTransaction () =
     let rawTransaction = IO.File.ReadAllText "transaction3.txt"
@@ -51,3 +55,5 @@ let ParsePegOutTransaction () =
 
     Assert.IsTrue(transaction.Body.Kernels.[0].Pegin.IsNone)
     Assert.AreEqual(97490L, transaction.Body.Kernels.[0].Pegouts.[0].Amount)
+
+    Validation.ValidateTransactionBody transaction.Body
