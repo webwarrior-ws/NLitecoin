@@ -89,122 +89,122 @@ let private CreateInputs (inputCoins: seq<NLitecoin.MimbleWimble.Coin>) : Inputs
     }
 
 let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress) (value: uint64) : Output * BlindingFactor =
-        let features = OutputFeatures.STANDARD_FIELDS_FEATURE_BIT
+    let features = OutputFeatures.STANDARD_FIELDS_FEATURE_BIT
 
-        // Generate 128-bit secret nonce 'n' = Hash128(T_nonce, sender_privkey)
-        let n = 
-            let hasher = Hasher(HashTags.NONCE)
-            hasher.Write(senderPrivKey.ToBytes())
-            hasher.Hash().ToBytes()
-            |> Array.take 16
-            |> BigInt
+    // Generate 128-bit secret nonce 'n' = Hash128(T_nonce, sender_privkey)
+    let n = 
+        let hasher = Hasher(HashTags.NONCE)
+        hasher.Write(senderPrivKey.ToBytes())
+        hasher.Hash().ToBytes()
+        |> Array.take 16
+        |> BigInt
 
-        // Calculate unique sending key 's' = H(T_send, A, B, v, n)
-        let s =
-            let hasher = Hasher(HashTags.SEND_KEY)
-            hasher.Append receiverAddr.ScanPubKey
-            hasher.Append receiverAddr.SpendPubKey
-            hasher.Write (BitConverter.GetBytes value)
-            hasher.Append n
-            hasher.Hash().ToBytes()
-            |> BigInteger.FromByteArrayUnsigned
+    // Calculate unique sending key 's' = H(T_send, A, B, v, n)
+    let s =
+        let hasher = Hasher(HashTags.SEND_KEY)
+        hasher.Append receiverAddr.ScanPubKey
+        hasher.Append receiverAddr.SpendPubKey
+        hasher.Write (BitConverter.GetBytes value)
+        hasher.Append n
+        hasher.Hash().ToBytes()
+        |> BigInteger.FromByteArrayUnsigned
 
-        let A =
-            match receiverAddr.ScanPubKey with
-            | PublicKey pubKey -> BigInteger.FromByteArrayUnsigned pubKey.Data
+    let A =
+        match receiverAddr.ScanPubKey with
+        | PublicKey pubKey -> BigInteger.FromByteArrayUnsigned pubKey.Data
 
-        let B =
-            match receiverAddr.SpendPubKey with
-            | PublicKey pubKey -> BigInteger.FromByteArrayUnsigned pubKey.Data
+    let B =
+        match receiverAddr.SpendPubKey with
+        | PublicKey pubKey -> BigInteger.FromByteArrayUnsigned pubKey.Data
 
-        // Derive shared secret 't' = H(T_derive, s*A)
-        let sA = A.Multiply s
-        let t = 
-            let hasher = Hasher(HashTags.DERIVE)
-            hasher.Write(sA.ToByteArrayUnsigned())
-            hasher.Hash()
+    // Derive shared secret 't' = H(T_derive, s*A)
+    let sA = A.Multiply s
+    let t = 
+        let hasher = Hasher(HashTags.DERIVE)
+        hasher.Write(sA.ToByteArrayUnsigned())
+        hasher.Hash()
 
-        // Construct one-time public key for receiver 'Ko' = H(T_outkey, t)*B
-        let Ko = 
-            let hasher = Hasher(HashTags.OUT_KEY)
-            hasher.Append t
-            B.Multiply(hasher.Hash().ToBytes() |> BigInteger.FromByteArrayUnsigned);
+    // Construct one-time public key for receiver 'Ko' = H(T_outkey, t)*B
+    let Ko = 
+        let hasher = Hasher(HashTags.OUT_KEY)
+        hasher.Append t
+        B.Multiply(hasher.Hash().ToBytes() |> BigInteger.FromByteArrayUnsigned);
 
-        // Key exchange public key 'Ke' = s*B
-        let Ke = B.Multiply s
+    // Key exchange public key 'Ke' = s*B
+    let Ke = B.Multiply s
 
-        // Calc blinding factor and mask nonce and amount.
-        let mask = OutputMask.FromShared(t.ToUInt256())
-        let blind = Pedersen.BlindSwitch mask.PreBlind (int64 value)
-        let mv = mask.MaskValue value
-        let mn = mask.MaskNonce n
+    // Calc blinding factor and mask nonce and amount.
+    let mask = OutputMask.FromShared(t.ToUInt256())
+    let blind = Pedersen.BlindSwitch mask.PreBlind (int64 value)
+    let mv = mask.MaskValue value
+    let mn = mask.MaskNonce n
 
-        // Commitment 'C' = r*G + v*H
-        let outputCommit = Pedersen.Commit (int64 value) blind
+    // Commitment 'C' = r*G + v*H
+    let outputCommit = Pedersen.Commit (int64 value) blind
 
-        // Calculate the ephemeral send pubkey 'Ks' = ks*G
-        let Ks = Secp256k1.ECPubKey.Create(senderPrivKey.ToBytes())
+    // Calculate the ephemeral send pubkey 'Ks' = ks*G
+    let Ks = Secp256k1.ECPubKey.Create(senderPrivKey.ToBytes())
 
-        // Derive view tag as first byte of H(T_tag, sA)
-        let viewTag = 
-            let hasher = Hasher(HashTags.TAG)
-            hasher.Write(sA.ToByteArrayUnsigned())
-            hasher.Hash().ToBytes().[0]
+    // Derive view tag as first byte of H(T_tag, sA)
+    let viewTag = 
+        let hasher = Hasher(HashTags.TAG)
+        hasher.Write(sA.ToByteArrayUnsigned())
+        hasher.Hash().ToBytes().[0]
 
-        let message = 
-            {
-                Features = features
-                StandardFields = 
-                    Some {
-                        KeyExchangePubkey = PublicKey(Ke.ToByteArrayUnsigned() |> BigInt)
-                        ViewTag = viewTag
-                        MaskedValue = mv
-                        MaskedNonce = mn
-                    }
-                ExtraData = Array.empty
-            }
+    let message = 
+        {
+            Features = features
+            StandardFields = 
+                Some {
+                    KeyExchangePubkey = PublicKey(Ke.ToByteArrayUnsigned() |> BigInt)
+                    ViewTag = viewTag
+                    MaskedValue = mv
+                    MaskedNonce = mn
+                }
+            ExtraData = Array.empty
+        }
 
-        let rangeProof = 
-            let emptyProofMessage = Array.zeroCreate 20
+    let rangeProof = 
+        let emptyProofMessage = Array.zeroCreate 20
             
-            let messageSerialized =
-                use memoryStream = new System.IO.MemoryStream()
-                let stream = new BitcoinStream(memoryStream, true)
-                (message :> ISerializeable).Write stream
-                memoryStream.ToArray()
+        let messageSerialized =
+            use memoryStream = new System.IO.MemoryStream()
+            let stream = new BitcoinStream(memoryStream, true)
+            (message :> ISerializeable).Write stream
+            memoryStream.ToArray()
 
-            Bulletproof.ConstructRangeProof 
-                value 
-                (blind.ToUInt256()) 
-                (NBitcoin.RandomUtils.GetUInt256())
-                (NBitcoin.RandomUtils.GetUInt256())
-                emptyProofMessage
-                (Some messageSerialized)
+        Bulletproof.ConstructRangeProof 
+            value 
+            (blind.ToUInt256()) 
+            (NBitcoin.RandomUtils.GetUInt256())
+            (NBitcoin.RandomUtils.GetUInt256())
+            emptyProofMessage
+            (Some messageSerialized)
         
-        // Sign the output
-        let signature =
-            let hasher = Hasher()
-            hasher.Append outputCommit
-            hasher.Write (Ks.ToBytes true) // ?
-            hasher.Write (Ko.ToByteArrayUnsigned())
-            hasher.Write (Hasher.CalculateHash(message).ToBytes())
-            hasher.Write (Hasher.CalculateHash(rangeProof).ToBytes())
-            let sigMessage = hasher.Hash()
-            SchnorrSign (senderPrivKey.ToBytes()) (sigMessage.ToBytes())
+    // Sign the output
+    let signature =
+        let hasher = Hasher()
+        hasher.Append outputCommit
+        hasher.Write (Ks.ToBytes true) // ?
+        hasher.Write (Ko.ToByteArrayUnsigned())
+        hasher.Write (Hasher.CalculateHash(message).ToBytes())
+        hasher.Write (Hasher.CalculateHash(rangeProof).ToBytes())
+        let sigMessage = hasher.Hash()
+        SchnorrSign (senderPrivKey.ToBytes()) (sigMessage.ToBytes())
 
-        let blindOut = mask.PreBlind
+    let blindOut = mask.PreBlind
         
-        let output = 
-            {
-                Commitment = outputCommit
-                SenderPublicKey = PublicKey(Ks.ToBytes(true) |> BigInt)
-                ReceiverPublicKey = PublicKey(Ko.ToByteArrayUnsigned() |> BigInt)
-                Message = message
-                RangeProof = rangeProof
-                Signature = signature
-            }
+    let output = 
+        {
+            Commitment = outputCommit
+            SenderPublicKey = PublicKey(Ks.ToBytes(true) |> BigInt)
+            ReceiverPublicKey = PublicKey(Ko.ToByteArrayUnsigned() |> BigInt)
+            Message = message
+            RangeProof = rangeProof
+            Signature = signature
+        }
         
-        output, blindOut
+    output, blindOut
 
 let private CreateOutputs (recipients: seq<Recipient>) : Outputs =
     let outputBlinds, outputs, coins = 
