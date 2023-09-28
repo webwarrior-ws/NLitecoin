@@ -40,30 +40,23 @@ let ValidateKernelSumForTransaction (transaction: Transaction) =
     let outputCommits = transaction.Body.Outputs |> Array.map (fun output -> output.Commitment)
     let kernelCommits = transaction.Body.Kernels |> Array.map (fun kernel -> kernel.Excess)
     let coinsAdded = transaction.Body.Kernels |> Array.sumBy (fun kernel -> kernel.GetSupplyChange())
-
     
-    // Calculate UTXO nonce sum
     let sumUtxoCommitment = 
-        Pedersen.AddCommitments 
-            outputCommits 
-            (Array.append inputCommits [| Pedersen.Commit (abs coinsAdded) (BlindingFactor NBitcoin.uint256.Zero) |])
+        if coinsAdded > 0L then
+            Pedersen.AddCommitments 
+                outputCommits 
+                (Array.append inputCommits [| Pedersen.Commit coinsAdded (BlindingFactor NBitcoin.uint256.Zero) |])
+        elif coinsAdded < 0L then
+            Pedersen.AddCommitments 
+                (Array.append outputCommits [| Pedersen.Commit (abs coinsAdded) (BlindingFactor NBitcoin.uint256.Zero) |])
+                inputCommits
+        else
+            Pedersen.AddCommitments outputCommits inputCommits
+    
+    let sumExcessCommitment = 
+        if transaction.KernelOffset.ToUInt256() <> NBitcoin.uint256.Zero then
+            Pedersen.AddCommitments (Array.append kernelCommits [| Pedersen.Commit 0 transaction.KernelOffset |]) Array.empty
+        else
+            Pedersen.AddCommitments kernelCommits Array.empty
 
-    failwith "not yet implemented"
-    (*
-    // Calculate total kernel excess
-    Commitment sum_excess_commitment = Pedersen::AddCommitments(kernel_commits);
-    if (!offset.IsZero()) {
-        sum_excess_commitment = Pedersen::AddCommitments(
-            { sum_excess_commitment, Commitment::Blinded(offset, 0) }
-        );
-    }
-
-    if (sum_utxo_commitment != sum_excess_commitment) {
-        LOG_ERROR_F(
-            "UTXO sum {} does not match kernel excess sum {}.",
-            sum_utxo_commitment,
-            sum_excess_commitment
-        );
-        ThrowValidation(EConsensusError::BLOCK_SUMS);
-    }
-    *)
+    Assert.AreEqual(sumUtxoCommitment, sumExcessCommitment)

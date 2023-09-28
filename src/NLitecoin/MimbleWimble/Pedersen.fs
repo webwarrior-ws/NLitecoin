@@ -19,7 +19,7 @@ let SerializeCommitment (commitment: ECPoint) =
     bytes
 
 let DeserializeCommitment (commitment: PedersenCommitment) : ECPoint =
-    let x = commitment.ToBytes() |> BigInteger.FromByteArrayUnsigned |> curve.Curve.FromBigInteger
+    let x = commitment.ToBytes() |> Array.skip 1 |> BigInteger.FromByteArrayUnsigned |> curve.Curve.FromBigInteger
     let y = x.Square().Multiply(x).Add(curve.Curve.B).Sqrt()
     let point = curve.Curve.CreatePoint(x.ToBigInteger(), y.ToBigInteger())
     if commitment.ToBytes().[0] &&& 1uy <> 0uy then

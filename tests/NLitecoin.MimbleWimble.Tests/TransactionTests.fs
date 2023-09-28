@@ -25,6 +25,7 @@ let ParsePegInTransaction () =
     Assert.IsEmpty(transaction.Body.Kernels.[0].Pegouts)
 
     Validation.ValidateTransactionBody transaction.Body
+    Validation.ValidateKernelSumForTransaction transaction
 
 [<Test>]
 let ParseHogExTransaction () =
@@ -41,6 +42,7 @@ let ParseHogExTransaction () =
     Assert.IsEmpty(transaction.Body.Kernels.[0].Pegouts)
 
     Validation.ValidateTransactionBody transaction.Body
+    Validation.ValidateKernelSumForTransaction transaction
 
 [<Test>]
 let ParsePegOutTransaction () =
@@ -57,3 +59,4 @@ let ParsePegOutTransaction () =
     Assert.AreEqual(97490L, transaction.Body.Kernels.[0].Pegouts.[0].Amount)
 
     Validation.ValidateTransactionBody transaction.Body
+    Validation.ValidateKernelSumForTransaction transaction
