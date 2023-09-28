@@ -382,15 +382,6 @@ type StealthAddress =
         ScanPubKey: PublicKey
         SpendPubKey: PublicKey
     }
-    static member Random() =
-        let scanPubKeyBytes = Array.zeroCreate PublicKey.NumBytes
-        NBitcoin.RandomUtils.Random.GetBytes scanPubKeyBytes
-        let spendPubKeyBytes = Array.zeroCreate PublicKey.NumBytes
-        NBitcoin.RandomUtils.Random.GetBytes spendPubKeyBytes
-        {
-            ScanPubKey = PublicKey(BigInt scanPubKeyBytes)
-            SpendPubKey = PublicKey(BigInt spendPubKeyBytes)
-        }
 
 type OutputMask =
     {

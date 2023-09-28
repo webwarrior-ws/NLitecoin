@@ -5,6 +5,7 @@ open Org.BouncyCastle.Asn1.X9
 open Org.BouncyCastle.Math
 open Org.BouncyCastle.Math.EC
 open Org.BouncyCastle.Crypto.Digests
+open Org.BouncyCastle.Security
 
 let curve = ECNamedCurveTable.GetByName("secp256k1")
 let domainParams = new ECDomainParameters(curve.Curve, curve.G, curve.N, curve.H, curve.GetSeed())

@@ -24,6 +24,7 @@
     <Compile Include="TransactionTests.fs" />
     <Compile Include="SerializationTests.fs" />
     <Compile Include="ZKPTests.fs" />
+    <Compile Include="TransactionBuilderTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

@@ -10,6 +10,8 @@ open EC
 type Coin = NLitecoin.MimbleWimble.Coin
 type Transaction = NLitecoin.MimbleWimble.Transaction
 
+exception IncorrectBalanceException of string
+
 type private Inputs =
     {
         TotalBlind: BlindingFactor
@@ -31,7 +33,7 @@ type TransactionBuildResult =
         OutputCoins: array<Coin>
     }
 
-/// Creates a standard input with a stealth key (feature bit = 1)// Creates a standard input with a stealth key (feature bit = 1)
+/// Creates a standard input with a stealth key (feature bit = 1)
 let private CreateInput (outputId: Hash) (commitment: PedersenCommitment) (inputKey: uint256) (outputKey: uint256) =
     let features = InputFeatures.STEALTH_KEY_FEATURE_BIT
 
@@ -46,16 +48,19 @@ let private CreateInput (outputId: Hash) (commitment: PedersenCommitment) (input
 
     // Calculate aggregated key k_agg = k_i + HASH(K_i||K_o) * k_o
     let sigKey = 
-        BigInteger.FromByteArrayUnsigned(outputKey.ToBytes())
-            .Multiply(BigInteger.FromByteArrayUnsigned keyHash)
-            .Add(BigInteger.FromByteArrayUnsigned(inputKey.ToBytes()))
+        Secp256k1.ECPrivKey.Create(outputKey.ToBytes())
+            .TweakMul(keyHash)
+            .TweakAdd(inputKey.ToBytes())
 
     let msgHasher = Hasher()
-    //msgHasher.Append features
+    msgHasher.Write (features |> uint8 |> Array.singleton)
     msgHasher.Append outputId
     let msgHash = msgHasher.Hash().ToBytes()
 
-    let schnorrSignature = SchnorrSign (sigKey.ToByteArrayUnsigned()) msgHash
+    let schnorrSignature = 
+        let sigKeyBytes = Array.zeroCreate 32
+        sigKey.WriteToSpan(sigKeyBytes.AsSpan())
+        SchnorrSign sigKeyBytes msgHash
         
     {
         Features = features
@@ -144,7 +149,7 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
     let outputCommit = Pedersen.Commit (int64 value) blind
 
     // Calculate the ephemeral send pubkey 'Ks' = ks*G
-    let Ks = Secp256k1.ECPubKey.Create(senderPrivKey.ToBytes())
+    let Ks = Secp256k1.ECPrivKey.Create(senderPrivKey.ToBytes()).CreatePubKey()
 
     // Derive view tag as first byte of H(T_tag, sA)
     let viewTag = 
@@ -311,7 +316,15 @@ let BuildTransaction
     let inputTotal = inputCoins |> Array.sumBy (fun coin -> coin.Amount)
 
     if inputTotal + (peginAmount |> Option.defaultValue 0L) <> pegoutTotal + recipientTotal + fee then
-        failwith "insufficient funds" // TODO: proper exception
+        let msg = 
+            "Incorrect balance: " +
+            (sprintf "inputTotal(%d) + peginAmount(%A) <> pegoutTotal(%d) + recipientTotal(%d) + fee(%d)"
+                inputTotal
+                peginAmount
+                pegoutTotal
+                recipientTotal
+                fee)
+        raise (IncorrectBalanceException msg)
 
     let inputs = CreateInputs inputCoins
     let outputs = CreateOutputs recipients
