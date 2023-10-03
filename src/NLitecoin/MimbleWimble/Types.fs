@@ -194,6 +194,10 @@ type PublicKey =
             match self with
             | PublicKey number -> (number :> ISerializeable).Write stream
 
+    member self.ToBytes() =
+        match self with
+        | PublicKey bigint -> bigint.Data
+
 type Signature = 
     | Signature of BigInt
     static member NumBytes = 64

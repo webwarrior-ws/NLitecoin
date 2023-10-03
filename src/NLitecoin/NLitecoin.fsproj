@@ -18,6 +18,7 @@
     <Compile Include="MimbleWimble\Pedersen.fs" />
     <Compile Include="MimbleWimble\Bulletproof.fs" />
     <Compile Include="MimbleWimble\TransactionBuilder.fs" />
+    <Compile Include="MimbleWimble\Wallet.fs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -57,10 +57,7 @@ let private CreateInput (outputId: Hash) (commitment: PedersenCommitment) (input
     msgHasher.Append outputId
     let msgHash = msgHasher.Hash().ToBytes()
 
-    let schnorrSignature = 
-        let sigKeyBytes = Array.zeroCreate 32
-        sigKey.WriteToSpan(sigKeyBytes.AsSpan())
-        SchnorrSign sigKeyBytes msgHash
+    let schnorrSignature = SchnorrSign (sigKey.ToBytes()) msgHash
         
     {
         Features = features
