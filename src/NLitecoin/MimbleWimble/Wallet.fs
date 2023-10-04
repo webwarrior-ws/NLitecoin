@@ -13,21 +13,21 @@ type KeyChain(seed: array<byte>) =
     // derive m/0'/100' (MWEB)
     let chainChildKey = accountKey.Derive(KeyPurposeMweb, true)
 
-    let scanKey = chainChildKey.Derive(0, true).ToBytes() |> BigInt |> PublicKey
-    let spendKey = chainChildKey.Derive(1, true).ToBytes() |> BigInt |> PublicKey
+    let scanKey = chainChildKey.Derive(0, true)
+    let spendKey = chainChildKey.Derive(1, true)
 
     member self.GetStealthAddress(index: uint32) : StealthAddress =
         let spendPubKey = self.GetSpendKey(index).CreatePubKey()
         {
             SpendPubKey = spendPubKey.ToBytes(true) |> BigInt |> PublicKey
-            ScanPubKey = spendPubKey.TweakMul(scanKey.ToBytes()).ToBytes(true) |> BigInt |> PublicKey
+            ScanPubKey = spendPubKey.TweakMul(scanKey.PrivateKey.ToBytes()).ToBytes(true) |> BigInt |> PublicKey
         }
 
     member self.GetSpendKey(index: uint32) : Secp256k1.ECPrivKey =
         let mi =
             let hasher = new Hasher(HashTags.ADDRESS)
             hasher.Write(BitConverter.GetBytes index)
-            hasher.Append scanKey
+            hasher.Write(scanKey.PrivateKey.ToBytes())
             hasher.Hash()
         
-        Secp256k1.ECPrivKey.Create(spendKey.ToBytes()).TweakAdd(mi.ToBytes())
+        Secp256k1.ECPrivKey.Create(spendKey.PrivateKey.ToBytes()).TweakAdd(mi.ToBytes())
