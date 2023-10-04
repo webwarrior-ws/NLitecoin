@@ -719,6 +719,7 @@ type Coin =
     member self.IsChange = self.AddressIndex = Coin.ChangeIndex
     member self.IsPegIn = self.AddressIndex = Coin.PeginIndex
     member self.IsMine = self.AddressIndex <> Coin.UnknownIndex
+    member self.HasSpendKey = self.SpendKey.IsSome
 
     static member Empty =
         {
