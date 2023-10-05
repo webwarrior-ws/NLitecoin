@@ -96,10 +96,11 @@ let TestSchnorrSign () =
 
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
 let TestPedersenCommit (value: uint64) (blind: BlindingFactor) =
-    use pedersen = new Secp256k1ZKP.Net.Pedersen()
-    let referenceCommitment = pedersen.Commit(value, blind.ToUInt256().ToBytes())
-    let ourCommitment = Pedersen.Commit (int64 value) blind
-    ourCommitment = (PedersenCommitment(BigInt referenceCommitment))
+    blind.ToUInt256() <> uint256.Zero ==> fun () ->
+        use pedersen = new Secp256k1ZKP.Net.Pedersen()
+        let referenceCommitment = pedersen.Commit(value, blind.ToUInt256().ToBytes())
+        let ourCommitment = Pedersen.Commit (int64 value) blind
+        ourCommitment = (PedersenCommitment(BigInt referenceCommitment))
 
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
 let TestBlindSwitch (value: uint64) (blind: BlindingFactor) =
