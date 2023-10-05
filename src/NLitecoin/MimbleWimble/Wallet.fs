@@ -12,7 +12,7 @@ let KeyPurposeMweb = 100
 type Coin = NLitecoin.MimbleWimble.Coin
 type MutableDictionary<'K,'V> = Collections.Generic.Dictionary<'K,'V>
 
-type KeyChain(seed: array<byte>) as self =
+type KeyChain(seed: array<byte>, maxUsedIndex: uint32) as self =
     let masterKey = ExtKey.CreateFromSeed seed
     // derive m/0'
     let accountKey = masterKey.Derive(0, true)
@@ -25,7 +25,11 @@ type KeyChain(seed: array<byte>) as self =
     // have to use dictionary as Secp256k1.ECPrivKey doesn't implement comparison
     let spendPubKeysMap = MutableDictionary<Secp256k1.ECPrivKey, uint32>()
     do 
-        for i in 0u..100u do spendPubKeysMap.[self.GetSpendKey i] <- i
+        for i in 0u..maxUsedIndex do spendPubKeysMap.[self.GetSpendKey i] <- i
+
+    new(seed: array<byte>) = KeyChain(seed, 100u)
+
+    member self.MaxUsedIndex : uint32 = spendPubKeysMap.Values |> Seq.max
 
     member self.GetIndexForSpendKey(key: Secp256k1.ECPrivKey) : Option<uint32> =
        match spendPubKeysMap.TryGetValue key with
@@ -142,26 +146,24 @@ type KeyChain(seed: array<byte>) as self =
                 |> uint256
                 |> Some
 
-type Wallet(keyChain: KeyChain) =
-    let mutable coins: Map<Hash, Coin> = Map.empty
-    
-    member self.AddCoin(coin: Coin) =
-        coins <- coins |> Map.add coin.OutputId coin
+type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>) =
+    new(keyChain: KeyChain) = Wallet(keyChain, Map.empty)
+
+    member self.AddCoin(coin: Coin) : Wallet =
+        Wallet(keyChain, coins |> Map.add coin.OutputId coin)
 
     member self.GetCoin(outputId: Hash) : Option<Coin> = 
         coins |> Map.tryFind outputId
 
-    member self.RewindOutput(output: Output) : Option<Coin> =
+    member self.RewindOutput(output: Output) : Wallet * Option<Coin> =
         match self.GetCoin(output.GetOutputID()) with
         | Some coin when coin.IsMine -> 
             // If the coin has the spend key, it's fully rewound. If not, try rewinding further.
             if coin.HasSpendKey then
-                Some coin
+                self, Some coin
             else
-                keyChain.RewindOutput output
+                self, keyChain.RewindOutput output
         | _ -> 
             match keyChain.RewindOutput output with
-            | Some coin ->
-                coins <- coins |> Map.add (output.GetOutputID()) coin
-                Some coin
-            | None -> None
+            | Some coin -> self.AddCoin coin, Some coin
+            | None -> self, None
