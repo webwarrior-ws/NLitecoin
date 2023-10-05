@@ -61,6 +61,22 @@ module Helpers =
     let writeCAmount (stream: BitcoinStream) (amount: CAmount) =
         stream.ReadWriteAsCompactVarInt(amount |> uint64 |> ref)
 
+    let convertBits (fromBits: int) (toBits: int) (input: array<byte>) : array<byte> =
+        let maxV = (1u <<< toBits) - 1u
+        let maxAcc = (1u <<< (fromBits + toBits - 1)) - 1u
+        [|
+            let mutable acc = 0u
+            let mutable bits = 0
+            for currByte in input do
+                acc <- ((acc <<< fromBits) ||| (uint32 currByte)) &&& maxAcc
+                bits <- bits + fromBits
+                while bits >= toBits do
+                    bits <- bits - toBits
+                    yield byte((acc >>> bits) &&& maxV)
+            if bits > 0 then 
+                yield byte((acc <<< (toBits - int bits)) &&& maxV)
+        |]
+
 type BlindingFactor = 
     | BlindingFactor of uint256
     member self.ToUInt256() =
@@ -386,6 +402,22 @@ type StealthAddress =
         ScanPubKey: PublicKey
         SpendPubKey: PublicKey
     }
+    interface ISerializeable with
+        member self.Write(stream) = 
+            (self.ScanPubKey :> ISerializeable).Write stream
+            (self.SpendPubKey :> ISerializeable).Write stream
+
+    member self.EncodeDestination() : string = 
+        use memoryStream = new MemoryStream()
+        let bitcoinStream = new BitcoinStream(memoryStream, true)
+        (self :> ISerializeable).Write bitcoinStream
+        let data = 
+            Array.append
+                (Array.singleton 0uy)
+                (memoryStream.ToArray() |> convertBits 8 5)
+        
+        DataEncoders.Encoders.Bech32("ltcmweb")
+            .EncodeData(data, DataEncoders.Bech32EncodingType.BECH32)
 
 type OutputMask =
     {
