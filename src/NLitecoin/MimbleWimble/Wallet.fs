@@ -31,6 +31,9 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) as self =
 
     member self.MaxUsedIndex : uint32 = spendPubKeysMap.Values |> Seq.max
 
+    member self.ScanKey = scanKey
+    member self.SpendKey = spendKey
+
     member self.GetIndexForSpendKey(key: Secp256k1.ECPrivKey) : Option<uint32> =
        match spendPubKeysMap.TryGetValue key with
        | (true, value) -> Some value
@@ -45,7 +48,7 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) as self =
     
     member self.GetSpendKey(index: uint32) : Secp256k1.ECPrivKey =
         let mi =
-            let hasher = new Hasher(HashTags.ADDRESS)
+            let hasher = Hasher HashTags.ADDRESS
             hasher.Write(BitConverter.GetBytes index)
             hasher.Write(scanKey.PrivateKey.ToBytes())
             hasher.Hash()
@@ -68,7 +71,7 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) as self =
                     |> BigInt 
                     |> PublicKey
             let viewTag = 
-                let hasher = Hasher(HashTags.TAG)
+                let hasher = Hasher HashTags.TAG
                 hasher.Append sharedSecret
                 hasher.Hash().ToBytes().[0]
             if viewTag <> outputFields.ViewTag then
@@ -76,13 +79,13 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) as self =
             else
                 /// t
                 let ecdheSharedSecret = 
-                    let hasher = Hasher(HashTags.DERIVE)
+                    let hasher = Hasher HashTags.DERIVE
                     hasher.Append sharedSecret
                     hasher.Hash()
 
                 let spendPubKey = 
                     let tHashed =
-                        let hasher = Hasher(HashTags.OUT_KEY)
+                        let hasher = Hasher HashTags.OUT_KEY
                         hasher.Append ecdheSharedSecret
                         hasher.Hash().ToBytes() |> BigInteger.FromByteArrayUnsigned
                     curve.Curve.DecodePoint(output.ReceiverPublicKey.ToBytes())
@@ -110,7 +113,7 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) as self =
                             }
                         // sending key 's' and check that s*B ?= Ke
                         let sendKey = 
-                            let hasher = Hasher(HashTags.SEND_KEY)
+                            let hasher = Hasher HashTags.SEND_KEY
                             hasher.Append address.ScanPubKey
                             hasher.Append address.SpendPubKey
                             hasher.Write(BitConverter.GetBytes value)
@@ -137,7 +140,7 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) as self =
             None
         else
             let sharedSecretHashed =
-                let hasher = Hasher(HashTags.OUT_KEY)
+                let hasher = Hasher HashTags.OUT_KEY
                 hasher.Append(sharedSecret.ToBytes() |> BigInt)
                 hasher.Hash()
             self.GetSpendKey(addressIndex)
