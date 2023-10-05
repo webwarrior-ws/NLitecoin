@@ -12,7 +12,7 @@ open EC
 let SerializeCommitment (commitment: ECPoint) =
     let bytes = 
         if commitment.IsInfinity || (commitment.XCoord.IsZero && commitment.YCoord.IsZero) then
-            Array.zeroCreate 33
+            Array.zeroCreate PedersenCommitment.NumBytes
         else
             commitment.GetEncoded true
     bytes.[0] <- 9uy ^^^ (if EC.IsQuadVar (commitment.Normalize().YCoord) then 1uy else 0uy)

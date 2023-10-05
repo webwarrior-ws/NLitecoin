@@ -412,9 +412,11 @@ type StealthAddress =
         let bitcoinStream = new BitcoinStream(memoryStream, true)
         (self :> ISerializeable).Write bitcoinStream
         let data = 
+            let bitsInByte = 8
+            let bitsExpectedByBech32Encoder = 5
             Array.append
                 (Array.singleton 0uy)
-                (memoryStream.ToArray() |> convertBits 8 5)
+                (memoryStream.ToArray() |> convertBits bitsInByte bitsExpectedByBech32Encoder)
         
         DataEncoders.Encoders.Bech32("ltcmweb")
             .EncodeData(data, DataEncoders.Bech32EncodingType.BECH32)

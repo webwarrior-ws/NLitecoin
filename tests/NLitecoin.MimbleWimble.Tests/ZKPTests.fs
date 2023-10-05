@@ -100,7 +100,7 @@ let TestPedersenCommit (value: uint64) (blind: BlindingFactor) =
         use pedersen = new Secp256k1ZKP.Net.Pedersen()
         let referenceCommitment = pedersen.Commit(value, blind.ToUInt256().ToBytes())
         let ourCommitment = Pedersen.Commit (int64 value) blind
-        ourCommitment = (PedersenCommitment(BigInt referenceCommitment))
+        ourCommitment = PedersenCommitment(BigInt referenceCommitment)
 
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
 let TestBlindSwitch (value: uint64) (blind: BlindingFactor) =
@@ -108,7 +108,7 @@ let TestBlindSwitch (value: uint64) (blind: BlindingFactor) =
         use pedersen = new Secp256k1ZKP.Net.Pedersen()
         let referenceBlind = pedersen.BlindSwitch(value, blind.ToUInt256().ToBytes())
         let ourBlind = Pedersen.BlindSwitch blind (int64 value)
-        ourBlind = (BlindingFactor(uint256 referenceBlind))
+        ourBlind = BlindingFactor(uint256 referenceBlind)
 
 [<Property(Arbitrary=[|typeof<ByteArray32Generators>|])>]
 let TestBlindingFactor (factor: BlindingFactor) =
