@@ -14,8 +14,11 @@ let Setup () =
 let ParsePegInTransaction () =
     let rawTransaction = IO.File.ReadAllText "transaction1.txt"
 
-    let mimbleRawWimbleTransaction = rawTransaction[Transaction.RegularLTCPeginTranasctionSize *  2 ..]
-    let transaction = Transaction.ParseString mimbleRawWimbleTransaction
+    let litecoinTransaction = 
+        NBitcoin.Transaction.Parse(rawTransaction, NLitecoin.Litecoin.Instance.Mainnet)
+
+    let transaction = 
+        (litecoinTransaction :?> NLitecoin.LitecoinTransaction).MimbleWimbleTransaction.Value
 
     Assert.AreEqual(0, transaction.Body.Inputs.Length)
     Assert.AreEqual(1, transaction.Body.Kernels.Length)
@@ -31,8 +34,11 @@ let ParsePegInTransaction () =
 let ParseHogExTransaction () =
     let rawTransaction = IO.File.ReadAllText "transaction2.txt"
 
-    let mimbleRawWimbleTransaction = rawTransaction[Transaction.RegularTransactionOffset * 2 ..]
-    let transaction = Transaction.ParseString mimbleRawWimbleTransaction
+    let litecoinTransaction = 
+        NBitcoin.Transaction.Parse(rawTransaction, NLitecoin.Litecoin.Instance.Mainnet)
+
+    let transaction = 
+        (litecoinTransaction :?> NLitecoin.LitecoinTransaction).MimbleWimbleTransaction.Value
 
     Assert.GreaterOrEqual(transaction.Body.Inputs.Length, 1)
     Assert.AreEqual(1, transaction.Body.Kernels.Length)
@@ -48,8 +54,11 @@ let ParseHogExTransaction () =
 let ParsePegOutTransaction () =
     let rawTransaction = IO.File.ReadAllText "transaction3.txt"
 
-    let mimbleRawWimbleTransaction = rawTransaction[Transaction.RegularTransactionOffset * 2 ..]
-    let transaction = Transaction.ParseString mimbleRawWimbleTransaction
+    let litecoinTransaction = 
+        NBitcoin.Transaction.Parse(rawTransaction, NLitecoin.Litecoin.Instance.Mainnet)
+
+    let transaction = 
+        (litecoinTransaction :?> NLitecoin.LitecoinTransaction).MimbleWimbleTransaction.Value
 
     Assert.GreaterOrEqual(transaction.Body.Inputs.Length, 1)
     Assert.AreEqual(1, transaction.Body.Kernels.Length)

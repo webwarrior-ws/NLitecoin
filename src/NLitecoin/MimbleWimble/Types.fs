@@ -705,10 +705,7 @@ type Transaction =
         // The transaction body.
         Body: TxBody
     }
-    /// see https://github.com/litecoin-project/lips/blob/master/lip-0003.mediawiki#user-content-PegIn_Transactions
-    static member RegularLTCPeginTranasctionSize = 200
-
-    static member RegularTransactionOffset = 9
+    static member Version = 1uy
 
     /// Parse hex-encoded MimbleWimble transaction
     static member ParseString(txString: string) : Transaction =
