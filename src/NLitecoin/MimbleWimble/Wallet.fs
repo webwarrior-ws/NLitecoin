@@ -12,7 +12,7 @@ let KeyPurposeMweb = 100
 type Coin = NLitecoin.MimbleWimble.Coin
 type MutableDictionary<'K,'V> = Collections.Generic.Dictionary<'K,'V>
 
-type KeyChain(seed: array<byte>, maxUsedIndex: uint32) as self =
+type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
     let masterKey = ExtKey.CreateFromSeed seed
     // derive m/0'
     let accountKey = masterKey.Derive(0, true)
@@ -22,10 +22,18 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) as self =
     let scanKey = chainChildKey.Derive(0, true)
     let spendKey = chainChildKey.Derive(1, true)
 
+    let calculateSpendKey(index: uint32) : Secp256k1.ECPrivKey =
+        let mi =
+            let hasher = Hasher HashTags.ADDRESS
+            hasher.Write(BitConverter.GetBytes index)
+            hasher.Write(scanKey.PrivateKey.ToBytes())
+            hasher.Hash()
+        Secp256k1.ECPrivKey.Create(spendKey.PrivateKey.ToBytes()).TweakAdd(mi.ToBytes())
+
     // have to use dictionary as Secp256k1.ECPrivKey doesn't implement comparison
-    let spendPubKeysMap = MutableDictionary<Secp256k1.ECPrivKey, uint32>()
-    do 
-        for i in 0u..maxUsedIndex do spendPubKeysMap.[self.GetSpendKey i] <- i
+    let spendPubKeysMap = 
+        MutableDictionary<Secp256k1.ECPrivKey, uint32>(
+            seq { for i in 0u..maxUsedIndex -> Collections.Generic.KeyValuePair(calculateSpendKey i, i) })
 
     new(seed: array<byte>) = KeyChain(seed, 100u)
 
@@ -47,18 +55,12 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) as self =
         }
     
     member self.GetSpendKey(index: uint32) : Secp256k1.ECPrivKey =
-        let mi =
-            let hasher = Hasher HashTags.ADDRESS
-            hasher.Write(BitConverter.GetBytes index)
-            hasher.Write(scanKey.PrivateKey.ToBytes())
-            hasher.Hash()
-        let spendKey =
-            Secp256k1.ECPrivKey.Create(spendKey.PrivateKey.ToBytes()).TweakAdd(mi.ToBytes())
-        
-        if not(spendPubKeysMap.Values |> Seq.contains index) then
+        match spendPubKeysMap |> Seq.tryFind (fun item -> item.Value = index) with
+        | Some item -> item.Key
+        | None ->
+            let spendKey = calculateSpendKey index
             spendPubKeysMap.[spendKey] <- index
-        
-        spendKey
+            spendKey
 
     member self.RewindOutput(output: Output) : Option<Coin> =
         match output.Message.StandardFields with
