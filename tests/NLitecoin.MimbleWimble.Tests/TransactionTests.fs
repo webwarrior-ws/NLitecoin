@@ -31,7 +31,7 @@ let ParsePegInTransaction () =
     Validation.ValidateKernelSumForTransaction transaction
 
 [<Test>]
-let ParseHogExTransaction () =
+let ParseMWTransaction () =
     let rawTransaction = IO.File.ReadAllText "transaction2.txt"
 
     let litecoinTransaction = 

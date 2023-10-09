@@ -66,7 +66,7 @@ let PegOutTransactionTest() =
     Validation.ValidateKernelSumForTransaction result.Transaction
 
 [<Test>]
-let HogExTransactionTest() =
+let MWTransactionTest() =
     let amount = 1000L
     let fee = 100L
     let inputCoin = 
@@ -94,7 +94,7 @@ let HogExTransactionTest() =
     Validation.ValidateKernelSumForTransaction result.Transaction
 
 [<Test>]
-let HogExTransactionTest2() =
+let MWTransactionTest2() =
     // send part of the funds
     let balance = 3000L
     let amount = 1000L
