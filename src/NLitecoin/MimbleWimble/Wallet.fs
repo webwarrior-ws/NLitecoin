@@ -10,6 +10,7 @@ open EC
 let KeyPurposeMweb = 100
 
 type Coin = NLitecoin.MimbleWimble.Coin
+type Transaction = NLitecoin.MimbleWimble.Transaction
 type MutableDictionary<'K,'V> = Collections.Generic.Dictionary<'K,'V>
 
 type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
@@ -151,14 +152,24 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
                 |> uint256
                 |> Some
 
-type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>) =
-    new(keyChain: KeyChain) = Wallet(keyChain, Map.empty)
+type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>) =
+    new(keyChain: KeyChain) = Wallet(keyChain, Map.empty, Set.empty)
 
     member self.AddCoin(coin: Coin) : Wallet =
-        Wallet(keyChain, coins |> Map.add coin.OutputId coin)
+        Wallet(keyChain, coins |> Map.add coin.OutputId coin, spentOutputs)
 
     member self.GetCoin(outputId: Hash) : Option<Coin> = 
         coins |> Map.tryFind outputId
+
+    member self.MarkAsSpent(outputId: Hash) : Wallet =
+        Wallet(keyChain, coins, spentOutputs |> Set.add outputId)
+
+    member self.GetUnspentCoins(): array<Coin> =
+        [| 
+            for outputId, coin in coins |> Map.toSeq do
+                if not(spentOutputs |> Set.contains outputId) then 
+                    yield coin 
+        |]
 
     member self.RewindOutput(output: Output) : Wallet * Option<Coin> =
         match self.GetCoin(output.GetOutputID()) with
@@ -172,3 +183,126 @@ type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>) =
             match keyChain.RewindOutput output with
             | Some coin -> self.AddCoin coin, Some coin
             | None -> self, None
+    
+    /// For given amount, pick enough coins from available coins to cover the amount.
+    /// Create recipient from leftover amount if any.
+    member private self.GetInputCoinsAndChangeRecipient(totalAmount: CAmount) : Option<array<Coin> * Option<Recipient>> =
+        let coins = 
+            self.GetUnspentCoins() 
+            |> Array.sortBy (fun coin -> coin.Amount)
+
+        let minCoinsIndex =
+            coins 
+            |> Array.scan (fun acc coin -> acc + coin.Amount) 0L
+            |> Array.tryFindIndex (fun partialSum -> partialSum >= totalAmount)
+
+        match minCoinsIndex with
+        | None -> None
+        | Some coinsIndex ->
+            let inputs = coins |> Array.take (coinsIndex + 1)
+            let inputSum = inputs |> Array.sumBy (fun coin -> coin.Amount)
+            let maybeRecipient =
+                if inputSum = totalAmount then
+                    None
+                else
+                    { 
+                        Amount = inputSum - totalAmount
+                        Address = keyChain.GetStealthAddress Coin.ChangeIndex 
+                    }
+                    |> Some
+            Some(inputs, maybeRecipient)
+
+    member private self.UpdateCoins (coinsToAdd: array<Coin>) (spentOutputs: array<Hash>) : Wallet =
+        let walletWithCoinsSpent = 
+            spentOutputs 
+            |> Array.fold 
+                (fun (wallet: Wallet) outputId -> wallet.MarkAsSpent outputId) 
+                self
+        
+        coinsToAdd 
+        |> Array.fold 
+            (fun (wallet: Wallet) coin -> wallet.AddCoin coin) 
+            walletWithCoinsSpent
+
+    member self.CreatePegInTransaction (amount: CAmount) (fee: CAmount) : Wallet * Transaction =
+        let recipient = { Amount = amount; Address = keyChain.GetStealthAddress Coin.PeginIndex }
+        
+        let result =
+            TransactionBuilder.BuildTransaction
+                Array.empty
+                (Array.singleton recipient)
+                Array.empty
+                (Some(amount + fee))
+                fee
+        
+        let updatedWallet = 
+            result.OutputCoins 
+            |> Array.fold 
+                (fun (wallet: Wallet) coin -> wallet.AddCoin coin) 
+                self
+
+        updatedWallet, result.Transaction
+
+    /// Try to create MW to MW transaction using funds in wallet. If there are insufficient funds, return None.
+    member self.TryCreateTransaction 
+        (amount: CAmount) 
+        (fee: CAmount) 
+        (address: StealthAddress) 
+        : Option<Wallet * Transaction> =
+        let amountWithFee = amount + fee
+
+        match self.GetInputCoinsAndChangeRecipient amountWithFee with
+        | None -> None
+        | Some (inputCoins, maybeChangeRecipient) ->
+            let recipient = { Amount = amount; Address = address }
+            let recipients =
+                match maybeChangeRecipient with
+                | None -> Array.singleton recipient
+                | Some changeRecipient -> [| recipient; changeRecipient |]
+
+            let result = 
+                TransactionBuilder.BuildTransaction
+                    inputCoins
+                    recipients
+                    Array.empty
+                    None
+                    fee
+
+            let updatedWallet = 
+                self.UpdateCoins
+                    (result.OutputCoins |> Array.filter (fun coin -> coin.IsChange))
+                    (inputCoins |> Array.map (fun coin -> coin.OutputId))
+
+            Some(updatedWallet, result.Transaction)
+
+    /// Try to create pegout transaction using funds in wallet. If there are insufficient funds, return None.
+    member self.TryCreatePegOutTransaction 
+        (amount: CAmount) 
+        (fee: CAmount) 
+        (scriptPubKey: NBitcoin.Script) 
+        : Option<Wallet * Transaction> =
+        let amountWithFee = amount + fee
+
+        match self.GetInputCoinsAndChangeRecipient amountWithFee with
+        | None -> None
+        | Some (inputCoins, maybeChangeRecipient) ->
+            let pegoutCoin = { Amount = amount; ScriptPubKey = scriptPubKey }
+            let recipients =
+                match maybeChangeRecipient with
+                | None -> Array.empty
+                | Some changeRecipient -> Array.singleton changeRecipient
+
+            let result = 
+                TransactionBuilder.BuildTransaction
+                    inputCoins
+                    recipients
+                    (Array.singleton pegoutCoin)
+                    None
+                    fee
+            
+            let updatedWallet = 
+                self.UpdateCoins
+                    (result.OutputCoins |> Array.filter (fun coin -> coin.IsChange))
+                    (inputCoins |> Array.map (fun coin -> coin.OutputId))
+
+            Some(updatedWallet, result.Transaction)
