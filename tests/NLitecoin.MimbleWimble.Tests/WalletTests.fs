@@ -44,3 +44,38 @@ let TestStealthAddressGeneration() =
     Assert.AreEqual(
         "ltcmweb1qq0yq03ewm830ugmkkvrvjmyyeslcpwk8ayd7k27qx63sryy6kx3ksqm3k6jd24ld3r5dp5lzx7rm7uyxfujf8sn7v4nlxeqwrcq6k6xxwqdc6tl3",
         receiveAddress.EncodeDestination())
+
+[<Test>]
+let TestWallet() =
+    let keyChain = KeyChain walletSeed
+    let wallet = Wallet keyChain
+    
+    let initialAmount = 10000L
+    let fee = 100L
+
+    let walletAfterPegin, peginTx = wallet.CreatePegInTransaction initialAmount fee
+    Assert.AreEqual(initialAmount, walletAfterPegin.GetBalance())
+
+    let payment1Amount = 2000L
+    let payment1Address = TransactionBuilderTests.GetRandomStealthAddress()
+    let walletAfterPayment1, payment1Tx = 
+        (walletAfterPegin.TryCreateTransaction payment1Amount fee payment1Address).Value
+    Assert.AreEqual(initialAmount - fee - payment1Amount, walletAfterPayment1.GetBalance())
+    
+    // not enough funds
+    Assert.AreEqual(None, walletAfterPayment1.TryCreateTransaction initialAmount fee payment1Address)
+    Assert.AreEqual(None, walletAfterPayment1.TryCreatePegOutTransaction initialAmount fee Script.Empty)
+
+    let pegOutAmount = 3000L
+    let walletAfterPegOut, pegOutTx = 
+        (walletAfterPayment1.TryCreatePegOutTransaction pegOutAmount fee Script.Empty).Value
+    Assert.AreEqual(initialAmount - fee - payment1Amount - fee - pegOutAmount, walletAfterPegOut.GetBalance())
+
+    let walletRestoredFromTransactions = 
+        [ peginTx; payment1Tx; pegOutTx ]
+        |> List.fold 
+            (fun (currWallet: Wallet) tx -> currWallet.ProcessTransaction tx)
+            wallet
+
+    Assert.AreEqual(walletAfterPegOut.GetBalance(), walletRestoredFromTransactions.GetBalance())
+    CollectionAssert.AreEquivalent(walletAfterPegOut.GetUnspentCoins(), walletRestoredFromTransactions.GetUnspentCoins())
