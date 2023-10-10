@@ -159,6 +159,9 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
 type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>) =
     new(keyChain: KeyChain) = Wallet(keyChain, Map.empty, Set.empty)
 
+    member self.Coins = coins
+    member self.SpentOutputs = spentOutputs
+
     member self.AddCoin(coin: Coin) : Wallet =
         Wallet(keyChain, coins |> Map.add coin.OutputId coin, spentOutputs)
 
