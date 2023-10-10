@@ -175,6 +175,9 @@ type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>)
                     yield coin 
         |]
 
+    member self.GetBalance() : CAmount =
+        self.GetUnspentCoins() |> Array.sumBy (fun coin -> coin.Amount)
+
     member self.RewindOutput(output: Output) : Wallet * Option<Coin> =
         match self.GetCoin(output.GetOutputID()) with
         | Some coin when coin.IsMine -> 
@@ -187,6 +190,23 @@ type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>)
             match keyChain.RewindOutput output with
             | Some coin -> self.AddCoin coin, Some coin
             | None -> self, None
+
+    /// Get our coins and spent outputs from transaction (if any) and update the wallet
+    member self.ProcessTransaction (transaction: Transaction) : Wallet =
+        let updatedWallet =
+            transaction.Body.Outputs
+            |> Array.fold 
+                (fun (wallet: Wallet) output -> wallet.RewindOutput output |> fst)
+                self
+
+        transaction.Body.Inputs
+        |> Array.fold 
+            (fun (wallet: Wallet) input -> 
+                if (wallet.GetCoin input.OutputID).IsSome then
+                    wallet.MarkAsSpent input.OutputID
+                else
+                    wallet)
+            updatedWallet
     
     /// For given amount, pick enough coins from available coins to cover the amount.
     /// Create recipient from leftover amount if any.
