@@ -113,32 +113,31 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
         hasher.Append receiverAddr.SpendPubKey
         hasher.Write (BitConverter.GetBytes value)
         hasher.Append n
-        hasher.Hash().ToBytes()
-        |> BigInteger.FromByteArrayUnsigned
+        hasher.Hash().ToBytes() |> Secp256k1.ECPrivKey.Create
 
     let A =
         match receiverAddr.ScanPubKey with
-        | PublicKey pubKey -> BigInteger.FromByteArrayUnsigned pubKey.Data
+        | PublicKey pubKey -> Secp256k1.ECPubKey.Create pubKey.Data
 
     let B =
         match receiverAddr.SpendPubKey with
-        | PublicKey pubKey -> BigInteger.FromByteArrayUnsigned pubKey.Data
+        | PublicKey pubKey -> Secp256k1.ECPubKey.Create pubKey.Data
 
     // Derive shared secret 't' = H(T_derive, s*A)
-    let sA = A.Multiply s
+    let sA = A.TweakMul(s.ToBytes())
     let t = 
         let hasher = Hasher(HashTags.DERIVE)
-        hasher.Write(sA.ToByteArrayUnsigned())
+        hasher.Write(sA.ToBytes())
         hasher.Hash()
 
     // Construct one-time public key for receiver 'Ko' = H(T_outkey, t)*B
     let Ko = 
         let hasher = Hasher(HashTags.OUT_KEY)
         hasher.Append t
-        B.Multiply(hasher.Hash().ToBytes() |> BigInteger.FromByteArrayUnsigned);
+        B.TweakMul(hasher.Hash().ToBytes())
 
     // Key exchange public key 'Ke' = s*B
-    let Ke = B.Multiply s
+    let Ke = B.TweakMul(s.ToBytes())
 
     // Calc blinding factor and mask nonce and amount.
     let mask = OutputMask.FromShared(t.ToUInt256())
@@ -155,15 +154,19 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
     // Derive view tag as first byte of H(T_tag, sA)
     let viewTag = 
         let hasher = Hasher(HashTags.TAG)
-        hasher.Write(sA.ToByteArrayUnsigned())
+        hasher.Write(sA.ToBytes())
         hasher.Hash().ToBytes().[0]
 
     let message = 
+        let keyExchangePubKey = 
+            let bytes = Ke.ToBytes true
+            assert(bytes.Length = PublicKey.NumBytes)
+            bytes |> BigInt |> PublicKey
         {
             Features = features
             StandardFields = 
                 Some {
-                    KeyExchangePubkey = PublicKey(Ke.ToByteArrayUnsigned() |> BigInt)
+                    KeyExchangePubkey = keyExchangePubKey
                     ViewTag = viewTag
                     MaskedValue = mv
                     MaskedNonce = mn
@@ -192,8 +195,8 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
     let signature =
         let hasher = Hasher()
         hasher.Append outputCommit
-        hasher.Write (Ks.ToBytes true) // ?
-        hasher.Write (Ko.ToByteArrayUnsigned())
+        hasher.Write (Ks.ToBytes true)
+        hasher.Write (Ko.ToBytes true)
         hasher.Write (Hasher.CalculateHash(message).ToBytes())
         hasher.Write (Hasher.CalculateHash(rangeProof).ToBytes())
         let sigMessage = hasher.Hash()
@@ -204,8 +207,8 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
     let output = 
         {
             Commitment = outputCommit
-            SenderPublicKey = PublicKey(Ks.ToBytes(true) |> BigInt)
-            ReceiverPublicKey = PublicKey(Ko.ToByteArrayUnsigned() |> BigInt)
+            SenderPublicKey = PublicKey(Ks.ToBytes true |> BigInt)
+            ReceiverPublicKey = PublicKey(Ko.ToBytes true |> BigInt)
             Message = message
             RangeProof = rangeProof
             Signature = signature

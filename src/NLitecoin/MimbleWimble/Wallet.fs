@@ -31,10 +31,13 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
             hasher.Hash()
         Secp256k1.ECPrivKey.Create(spendKey.PrivateKey.ToBytes()).TweakAdd(mi.ToBytes())
 
-    // have to use dictionary as Secp256k1.ECPrivKey doesn't implement comparison
+    // have to use dictionary as Secp256k1.ECPubKey doesn't implement comparison
     let spendPubKeysMap = 
-        MutableDictionary<Secp256k1.ECPrivKey, uint32>(
-            seq { for i in 0u..maxUsedIndex -> Collections.Generic.KeyValuePair(calculateSpendKey i, i) })
+        MutableDictionary<Secp256k1.ECPubKey, uint32>(
+            seq { 
+                for i in 0u..maxUsedIndex -> 
+                    let spendPubKey = (calculateSpendKey i).CreatePubKey()
+                    Collections.Generic.KeyValuePair(spendPubKey, i) })
 
     new(seed: array<byte>) = KeyChain(seed, 100u)
 
@@ -43,23 +46,23 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
     member self.ScanKey = scanKey
     member self.SpendKey = spendKey
 
-    member self.GetIndexForSpendKey(key: Secp256k1.ECPrivKey) : Option<uint32> =
+    member self.GetIndexForSpendKey(key: Secp256k1.ECPubKey) : Option<uint32> =
        match spendPubKeysMap.TryGetValue key with
        | (true, value) -> Some value
        | _ -> None
 
     member self.GetStealthAddress(index: uint32) : StealthAddress =
-        let spendPubKey = self.GetSpendKey(index).CreatePubKey()
+        let spendPubKey = self.GetSpendKey(index)
         {
             SpendPubKey = spendPubKey.ToBytes(true) |> BigInt |> PublicKey
             ScanPubKey = spendPubKey.TweakMul(scanKey.PrivateKey.ToBytes()).ToBytes(true) |> BigInt |> PublicKey
         }
     
-    member self.GetSpendKey(index: uint32) : Secp256k1.ECPrivKey =
+    member self.GetSpendKey(index: uint32) : Secp256k1.ECPubKey =
         match spendPubKeysMap |> Seq.tryFind (fun item -> item.Value = index) with
         | Some item -> item.Key
         | None ->
-            let spendKey = calculateSpendKey index
+            let spendKey = (calculateSpendKey index).CreatePubKey()
             spendPubKeysMap.[spendKey] <- index
             spendKey
 
@@ -86,15 +89,16 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
                     hasher.Append sharedSecret
                     hasher.Hash()
 
+                /// B_i
                 let spendPubKey = 
                     let tHashed =
                         let hasher = Hasher HashTags.OUT_KEY
                         hasher.Append ecdheSharedSecret
                         hasher.Hash().ToBytes() |> BigInteger.FromByteArrayUnsigned
-                    curve.Curve.DecodePoint(output.ReceiverPublicKey.ToBytes())
-                        .Multiply(tHashed.ModInverse EC.scalarOrder)
+                    Secp256k1.ECPubKey.Create(output.ReceiverPublicKey.ToBytes())
+                        .TweakMul((tHashed.ModInverse EC.scalarOrder).ToByteArrayUnsigned())
                 
-                match self.GetIndexForSpendKey(Secp256k1.ECPrivKey.Create(spendPubKey.GetEncoded(true))) with
+                match self.GetIndexForSpendKey spendPubKey with
                 | None -> None
                 | Some index ->
                     let mask = OutputMask.FromShared(ecdheSharedSecret.ToUInt256())
@@ -107,10 +111,10 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
                     else
                         let address = 
                             { 
-                                SpendPubKey = spendPubKey.GetEncoded(true) |> BigInt |> PublicKey
+                                SpendPubKey = spendPubKey.ToBytes true |> BigInt |> PublicKey
                                 ScanPubKey = 
-                                    spendPubKey.Multiply(scanKey.PrivateKey.ToBytes() |> BigInteger.FromByteArrayUnsigned)
-                                        .GetEncoded(true) 
+                                    spendPubKey.TweakMul(scanKey.PrivateKey.ToBytes())
+                                        .ToBytes(true) 
                                         |> BigInt 
                                         |> PublicKey 
                             }
@@ -123,7 +127,7 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
                             hasher.Append maskNonce
                             hasher.Hash()
                         if outputFields.KeyExchangePubkey.ToBytes() <> 
-                            spendPubKey.Multiply(sendKey.ToBytes() |> BigInteger.FromByteArrayUnsigned).GetEncoded(true) then
+                            spendPubKey.TweakMul(sendKey.ToBytes()).ToBytes(true) then
                             None
                         else
                             {
@@ -146,7 +150,7 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
                 let hasher = Hasher HashTags.OUT_KEY
                 hasher.Append(sharedSecret.ToBytes() |> BigInt)
                 hasher.Hash()
-            self.GetSpendKey(addressIndex)
+            (calculateSpendKey addressIndex)
                 .TweakMul(sharedSecretHashed.ToBytes())
                 .ToBytes()
                 |> uint256
@@ -214,6 +218,7 @@ type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>)
             self.GetUnspentCoins() 
             |> Array.sortBy (fun coin -> coin.Amount)
 
+        // 1-based because Array.scan result also includes initial state
         let minCoinsIndex =
             coins 
             |> Array.scan (fun acc coin -> acc + coin.Amount) 0L
@@ -222,7 +227,7 @@ type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>)
         match minCoinsIndex with
         | None -> None
         | Some coinsIndex ->
-            let inputs = coins |> Array.take (coinsIndex + 1)
+            let inputs = coins |> Array.take coinsIndex
             let inputSum = inputs |> Array.sumBy (fun coin -> coin.Amount)
             let maybeRecipient =
                 if inputSum = totalAmount then
@@ -235,18 +240,19 @@ type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>)
                     |> Some
             Some(inputs, maybeRecipient)
 
-    member private self.UpdateCoins (coinsToAdd: array<Coin>) (spentOutputs: array<Hash>) : Wallet =
+    member private self.Update (transactionOutputs: array<Output>) (spentOutputs: array<Hash>) : Wallet =
         let walletWithCoinsSpent = 
             spentOutputs 
             |> Array.fold 
                 (fun (wallet: Wallet) outputId -> wallet.MarkAsSpent outputId) 
                 self
         
-        coinsToAdd 
+        transactionOutputs
         |> Array.fold 
-            (fun (wallet: Wallet) coin -> wallet.AddCoin coin) 
+            (fun (wallet: Wallet) output -> (wallet.RewindOutput output) |> fst)
             walletWithCoinsSpent
 
+    /// Create MW pegin transaction. Litecoin transaction must have (amount + fee) as its output.
     member self.CreatePegInTransaction (amount: CAmount) (fee: CAmount) : Wallet * Transaction =
         let recipient = { Amount = amount; Address = keyChain.GetStealthAddress Coin.PeginIndex }
         
@@ -259,9 +265,9 @@ type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>)
                 fee
         
         let updatedWallet = 
-            result.OutputCoins 
+            result.Transaction.Body.Outputs
             |> Array.fold 
-                (fun (wallet: Wallet) coin -> wallet.AddCoin coin) 
+                (fun (wallet: Wallet) output -> (wallet.RewindOutput output) |> fst)
                 self
 
         updatedWallet, result.Transaction
@@ -292,8 +298,8 @@ type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>)
                     fee
 
             let updatedWallet = 
-                self.UpdateCoins
-                    (result.OutputCoins |> Array.filter (fun coin -> coin.IsChange))
+                self.Update
+                    result.Transaction.Body.Outputs
                     (inputCoins |> Array.map (fun coin -> coin.OutputId))
 
             Some(updatedWallet, result.Transaction)
@@ -324,8 +330,8 @@ type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>)
                     fee
             
             let updatedWallet = 
-                self.UpdateCoins
-                    (result.OutputCoins |> Array.filter (fun coin -> coin.IsChange))
+                self.Update
+                    result.Transaction.Body.Outputs
                     (inputCoins |> Array.map (fun coin -> coin.OutputId))
 
             Some(updatedWallet, result.Transaction)
