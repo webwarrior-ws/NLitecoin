@@ -34,11 +34,15 @@ type TransactionBuildResult =
     }
 
 /// Creates a standard input with a stealth key (feature bit = 1)
-let private CreateInput (outputId: Hash) (commitment: PedersenCommitment) (inputKey: uint256) (outputKey: uint256) =
+let private CreateInput 
+    (outputId: Hash) 
+    (commitment: PedersenCommitment) 
+    (inputKey: Secp256k1.ECPrivKey) 
+    (outputKey: Secp256k1.ECPrivKey) =
     let features = InputFeatures.STEALTH_KEY_FEATURE_BIT
 
-    let inputPubKey = PublicKey(inputKey.ToBytes() |> BigInt)
-    let outputPubKey = PublicKey(outputKey.ToBytes() |> BigInt)
+    let inputPubKey = PublicKey(inputKey.CreatePubKey().ToBytes() |> BigInt)
+    let outputPubKey = PublicKey(outputKey.CreatePubKey().ToBytes() |> BigInt)
 
     // Hash keys (K_i||K_o)
     let keyHasher = Hasher()
@@ -48,7 +52,7 @@ let private CreateInput (outputId: Hash) (commitment: PedersenCommitment) (input
 
     // Calculate aggregated key k_agg = k_i + HASH(K_i||K_o) * k_o
     let sigKey = 
-        Secp256k1.ECPrivKey.Create(outputKey.ToBytes())
+        outputKey
             .TweakMul(keyHash)
             .TweakAdd(inputKey.ToBytes())
 
@@ -78,8 +82,8 @@ let private CreateInputs (inputCoins: seq<NLitecoin.MimbleWimble.Coin>) : Inputs
                 CreateInput
                     inputCoin.OutputId 
                     (Pedersen.Commit inputCoin.Amount blind) 
-                    ephemeralKey 
-                    inputCoin.SpendKey.Value
+                    (Secp256k1.ECPrivKey.Create(ephemeralKey.ToBytes()))
+                    (Secp256k1.ECPrivKey.Create(inputCoin.SpendKey.Value.ToBytes()))
             yield blind, (BlindingFactor ephemeralKey, BlindingFactor inputCoin.SpendKey.Value), input |]
         |> Array.unzip3
 
