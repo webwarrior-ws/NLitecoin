@@ -51,7 +51,7 @@ module Helpers =
     let writeByteArray (stream: BitcoinStream) (arr: array<byte>) =
         let len = uint64 arr.Length
         VarInt.StaticWrite(stream, len)
-        stream.ReadWrite(ref arr)
+        stream.ReadWrite arr
 
     let readCAmount (stream: BitcoinStream) : CAmount =
         let amountRef = ref 0UL
@@ -173,14 +173,14 @@ type BigInt(bytes: array<byte>) =
 
     static member Read(stream: BitcoinStream) (numBytes: int) : BigInt =
         assert(not stream.Serializing)
-        let result : ref<array<uint8>> = Array.zeroCreate numBytes |> ref
+        let result : array<uint8> = Array.zeroCreate numBytes
         stream.ReadWrite result
-        BigInt result.Value
+        BigInt result
 
     interface ISerializeable with
         member self.Write(stream) =
             assert(stream.Serializing)
-            stream.ReadWrite (self.Data |> ref)
+            stream.ReadWrite self.Data
 
 type PedersenCommitment = 
     | PedersenCommitment of BigInt
@@ -386,7 +386,7 @@ type RangeProof =
     static member Read(stream: BitcoinStream) : RangeProof =
         assert(not stream.Serializing)
         let bytes = Array.zeroCreate<byte> RangeProof.Size
-        stream.ReadWrite(ref bytes)
+        stream.ReadWrite bytes
         RangeProof bytes
 
     interface ISerializeable with
@@ -395,7 +395,7 @@ type RangeProof =
             match self with
             | RangeProof bytes -> 
                 assert(bytes.Length = RangeProof.Size)
-                stream.ReadWrite(ref bytes)
+                stream.ReadWrite bytes
 
 type StealthAddress =
     {

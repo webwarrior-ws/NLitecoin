@@ -21,7 +21,7 @@ type internal Witness(inputs: TxInList) =
                         | null -> WitScript.Empty
                         | witScript -> witScript
                     script.ToBytes()
-                stream.ReadWrite(ref bytes)
+                stream.ReadWrite bytes
             else
                 input.WitScript <- WitScript.Load stream
 
