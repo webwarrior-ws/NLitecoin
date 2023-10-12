@@ -255,3 +255,8 @@ let TestTransactionDeserilaization() =
 
     Assert.AreEqual(transaction.Body.Kernels[0].Pegin, Some 123L)
     Assert.AreEqual(transaction.Body.Kernels[1].Fee, Some 5L)
+
+[<Property(Arbitrary=[|typeof<Generators>|])>]
+let StealthAddressStringEncodingRoundtrip(stealthAddress: StealthAddress) =
+    let encoded = stealthAddress.EncodeDestination()
+    StealthAddress.DecodeDestination encoded = stealthAddress
