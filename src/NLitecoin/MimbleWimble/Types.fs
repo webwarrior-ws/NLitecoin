@@ -407,6 +407,24 @@ type StealthAddress =
             (self.ScanPubKey :> ISerializeable).Write stream
             (self.SpendPubKey :> ISerializeable).Write stream
 
+    static member Bech32Prefix = "ltcmweb"
+    
+    static member DecodeDestination(addressString: string) : StealthAddress =
+        let encoder = 
+            DataEncoders.Encoders.Bech32(StealthAddress.Bech32Prefix, StrictLength = false)
+        let bytes = 
+            encoder
+                .DecodeDataRaw(addressString, ref DataEncoders.Bech32EncodingType.BECH32)
+        use memoryStream = 
+            let bitsInByte = 8
+            let bitsExpectedByBech32Encoder = 5
+            new MemoryStream(bytes |> Array.skip 1 |> convertBits bitsExpectedByBech32Encoder bitsInByte)
+        let bitcoinStream = new BitcoinStream(memoryStream, false)
+        {
+            ScanPubKey = PublicKey.Read bitcoinStream
+            SpendPubKey = PublicKey.Read bitcoinStream
+        }
+
     member self.EncodeDestination() : string = 
         use memoryStream = new MemoryStream()
         let bitcoinStream = new BitcoinStream(memoryStream, true)
@@ -418,7 +436,7 @@ type StealthAddress =
                 (Array.singleton 0uy)
                 (memoryStream.ToArray() |> convertBits bitsInByte bitsExpectedByBech32Encoder)
         
-        DataEncoders.Encoders.Bech32("ltcmweb")
+        DataEncoders.Encoders.Bech32(StealthAddress.Bech32Prefix)
             .EncodeData(data, DataEncoders.Bech32EncodingType.BECH32)
 
 type OutputMask =
