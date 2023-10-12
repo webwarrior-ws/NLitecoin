@@ -13,6 +13,97 @@ type Coin = NLitecoin.MimbleWimble.Coin
 type Transaction = NLitecoin.MimbleWimble.Transaction
 type MutableDictionary<'K,'V> = Collections.Generic.Dictionary<'K,'V>
 
+type IKeyChain =
+    abstract GetStealthAddress: uint32 -> StealthAddress
+    abstract RewindOutput: Output -> Option<Coin>
+    abstract PrivateScanKey: Key
+
+let RewindOutput 
+    (keyChain: IKeyChain) 
+    (getIndexForSpendKey: Secp256k1.ECPubKey -> Option<uint32>) 
+    (calculateOutputKey: uint256 -> uint32 -> Option<uint256>)
+    (output: Output) : Option<Coin> =
+    match output.Message.StandardFields with
+    | None -> None
+    | Some outputFields ->
+        let sharedSecret = 
+            Secp256k1.ECPubKey.Create(outputFields.KeyExchangePubkey.ToBytes())
+                .TweakMul(keyChain.PrivateScanKey.ToBytes())
+                .ToBytes(true) 
+                |> BigInt 
+                |> PublicKey
+        let viewTag = 
+            let hasher = Hasher HashTags.TAG
+            hasher.Append sharedSecret
+            hasher.Hash().ToBytes().[0]
+        if viewTag <> outputFields.ViewTag then
+            None
+        else
+            /// t
+            let ecdheSharedSecret = 
+                let hasher = Hasher HashTags.DERIVE
+                hasher.Append sharedSecret
+                hasher.Hash()
+
+            /// B_i
+            let spendPubKey = 
+                let tHashed =
+                    let hasher = Hasher HashTags.OUT_KEY
+                    hasher.Append ecdheSharedSecret
+                    hasher.Hash().ToBytes() |> BigInteger.FromByteArrayUnsigned
+                Secp256k1.ECPubKey.Create(output.ReceiverPublicKey.ToBytes())
+                    .TweakMul((tHashed.ModInverse EC.scalarOrder).ToByteArrayUnsigned())
+                
+            match getIndexForSpendKey spendPubKey with
+            | None -> None
+            | Some index ->
+                let mask = OutputMask.FromShared(ecdheSharedSecret.ToUInt256())
+                let value = mask.MaskValue outputFields.MaskedValue |> int64
+                /// n
+                let maskNonce = mask.MaskNonce outputFields.MaskedNonce
+
+                if Pedersen.Commit value (Pedersen.BlindSwitch mask.PreBlind value) <> output.Commitment then
+                    None
+                else
+                    let address = 
+                        { 
+                            SpendPubKey = spendPubKey.ToBytes true |> BigInt |> PublicKey
+                            ScanPubKey = 
+                                spendPubKey.TweakMul(keyChain.PrivateScanKey.ToBytes())
+                                    .ToBytes(true) 
+                                    |> BigInt 
+                                    |> PublicKey 
+                        }
+                    // sending key 's' and check that s*B ?= Ke
+                    let sendKey = 
+                        let hasher = Hasher HashTags.SEND_KEY
+                        hasher.Append address.ScanPubKey
+                        hasher.Append address.SpendPubKey
+                        hasher.Write(BitConverter.GetBytes value)
+                        hasher.Append maskNonce
+                        hasher.Hash()
+                    if outputFields.KeyExchangePubkey.ToBytes() <> 
+                        spendPubKey.TweakMul(sendKey.ToBytes()).ToBytes(true) then
+                        None
+                    else
+                        {
+                            AddressIndex = index
+                            Blind = Some mask.PreBlind
+                            Amount = value
+                            OutputId = output.GetOutputID()
+                            Address = Some address
+                            SharedSecret = Some(ecdheSharedSecret.ToUInt256())
+                            SpendKey = calculateOutputKey (ecdheSharedSecret.ToUInt256()) index
+                            SenderKey = None
+                        }
+                        |> Some
+
+let GetStealthAddress (spendPubKey: Secp256k1.ECPubKey) (privateScanKey: Key) : StealthAddress =
+    {
+        SpendPubKey = spendPubKey.ToBytes(true) |> BigInt |> PublicKey
+        ScanPubKey = spendPubKey.TweakMul(privateScanKey.ToBytes()).ToBytes(true) |> BigInt |> PublicKey
+    }
+
 type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
     let masterKey = ExtKey.CreateFromSeed seed
     // derive m/0'
@@ -41,6 +132,11 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
 
     new(seed: array<byte>) = KeyChain(seed, 100u)
 
+    interface IKeyChain with
+        override self.GetStealthAddress(index) = self.GetStealthAddress(index)
+        override self.RewindOutput(output) = self.RewindOutput(output)
+        override self.PrivateScanKey = self.ScanKey.PrivateKey
+
     member self.MaxUsedIndex : uint32 = spendPubKeysMap.Values |> Seq.max
 
     member self.ScanKey = scanKey
@@ -53,10 +149,7 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
 
     member self.GetStealthAddress(index: uint32) : StealthAddress =
         let spendPubKey = self.GetSpendKey(index)
-        {
-            SpendPubKey = spendPubKey.ToBytes(true) |> BigInt |> PublicKey
-            ScanPubKey = spendPubKey.TweakMul(scanKey.PrivateKey.ToBytes()).ToBytes(true) |> BigInt |> PublicKey
-        }
+        GetStealthAddress spendPubKey scanKey.PrivateKey
     
     member self.GetSpendKey(index: uint32) : Secp256k1.ECPubKey =
         match spendPubKeysMap |> Seq.tryFind (fun item -> item.Value = index) with
@@ -67,80 +160,7 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
             spendKey
 
     member self.RewindOutput(output: Output) : Option<Coin> =
-        match output.Message.StandardFields with
-        | None -> None
-        | Some outputFields ->
-            let sharedSecret = 
-                Secp256k1.ECPubKey.Create(outputFields.KeyExchangePubkey.ToBytes())
-                    .TweakMul(scanKey.PrivateKey.ToBytes())
-                    .ToBytes(true) 
-                    |> BigInt 
-                    |> PublicKey
-            let viewTag = 
-                let hasher = Hasher HashTags.TAG
-                hasher.Append sharedSecret
-                hasher.Hash().ToBytes().[0]
-            if viewTag <> outputFields.ViewTag then
-                None
-            else
-                /// t
-                let ecdheSharedSecret = 
-                    let hasher = Hasher HashTags.DERIVE
-                    hasher.Append sharedSecret
-                    hasher.Hash()
-
-                /// B_i
-                let spendPubKey = 
-                    let tHashed =
-                        let hasher = Hasher HashTags.OUT_KEY
-                        hasher.Append ecdheSharedSecret
-                        hasher.Hash().ToBytes() |> BigInteger.FromByteArrayUnsigned
-                    Secp256k1.ECPubKey.Create(output.ReceiverPublicKey.ToBytes())
-                        .TweakMul((tHashed.ModInverse EC.scalarOrder).ToByteArrayUnsigned())
-                
-                match self.GetIndexForSpendKey spendPubKey with
-                | None -> None
-                | Some index ->
-                    let mask = OutputMask.FromShared(ecdheSharedSecret.ToUInt256())
-                    let value = mask.MaskValue outputFields.MaskedValue |> int64
-                    /// n
-                    let maskNonce = mask.MaskNonce outputFields.MaskedNonce
-
-                    if Pedersen.Commit value (Pedersen.BlindSwitch mask.PreBlind value) <> output.Commitment then
-                        None
-                    else
-                        let address = 
-                            { 
-                                SpendPubKey = spendPubKey.ToBytes true |> BigInt |> PublicKey
-                                ScanPubKey = 
-                                    spendPubKey.TweakMul(scanKey.PrivateKey.ToBytes())
-                                        .ToBytes(true) 
-                                        |> BigInt 
-                                        |> PublicKey 
-                            }
-                        // sending key 's' and check that s*B ?= Ke
-                        let sendKey = 
-                            let hasher = Hasher HashTags.SEND_KEY
-                            hasher.Append address.ScanPubKey
-                            hasher.Append address.SpendPubKey
-                            hasher.Write(BitConverter.GetBytes value)
-                            hasher.Append maskNonce
-                            hasher.Hash()
-                        if outputFields.KeyExchangePubkey.ToBytes() <> 
-                            spendPubKey.TweakMul(sendKey.ToBytes()).ToBytes(true) then
-                            None
-                        else
-                            {
-                                AddressIndex = index
-                                Blind = Some mask.PreBlind
-                                Amount = value
-                                OutputId = output.GetOutputID()
-                                Address = Some address
-                                SharedSecret = Some(ecdheSharedSecret.ToUInt256())
-                                SpendKey = self.CalculateOutputKey (ecdheSharedSecret.ToUInt256()) index
-                                SenderKey = None
-                            }
-                            |> Some
+        RewindOutput self self.GetIndexForSpendKey self.CalculateOutputKey output
 
     member private self.CalculateOutputKey (sharedSecret: uint256) (addressIndex: uint32) : Option<uint256> =
         if addressIndex = Coin.UnknownIndex || addressIndex = Coin.CustomKey then
@@ -156,11 +176,30 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
                 |> uint256
                 |> Some
 
-type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>) =
-    new(keyChain: KeyChain) = Wallet(keyChain, Map.empty, Set.empty)
+/// Keychain that doesn't have access to wallet seed, only to private scan key and public spend keys.
+/// That is enough to check balance but not enough to spend funds.
+type ReadonlyKeychain(privateScanKey: Key, spendPubKeysMap: Collections.Generic.IReadOnlyDictionary<Secp256k1.ECPubKey, uint32>) =
+    interface IKeyChain with
+        override self.GetStealthAddress(index) = 
+            let spendPubKey = (spendPubKeysMap |> Seq.find (fun kvPair -> kvPair.Value = index)).Key
+            GetStealthAddress spendPubKey privateScanKey
+        
+        override self.RewindOutput(output) = 
+            let getIndexForPubKey pubKey =
+                match spendPubKeysMap.TryGetValue pubKey with
+                | (true, key) -> Some key
+                | (false, _) -> None
+            RewindOutput self getIndexForPubKey (fun _ _ -> None) output
+        
+        override self.PrivateScanKey = privateScanKey
+
+type Wallet(keyChain: IKeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>) =
+    new(keyChain: IKeyChain) = Wallet(keyChain, Map.empty, Set.empty)
 
     member self.Coins = coins
     member self.SpentOutputs = spentOutputs
+
+    member self.CanSpend = keyChain :? KeyChain
 
     member self.AddCoin(coin: Coin) : Wallet =
         Wallet(keyChain, coins |> Map.add coin.OutputId coin, spentOutputs)
@@ -174,7 +213,7 @@ type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>)
     member self.GetUnspentCoins(): array<Coin> =
         [| 
             for outputId, coin in coins |> Map.toSeq do
-                if not(spentOutputs |> Set.contains outputId) then 
+                if coin.IsMine && not(spentOutputs |> Set.contains outputId) then 
                     yield coin 
         |]
 
@@ -217,6 +256,7 @@ type Wallet(keyChain: KeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>)
         let coins = 
             self.GetUnspentCoins() 
             |> Array.sortBy (fun coin -> coin.Amount)
+            |> Array.filter (fun coin -> coin.HasSpendKey)
 
         // 1-based because Array.scan result also includes initial state
         let minCoinsIndex =
