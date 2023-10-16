@@ -8,7 +8,7 @@ open Org.BouncyCastle.Math
 open Org.BouncyCastle.Math.EC
 open Org.BouncyCastle.Crypto.Digests
 
-let curve = ECNamedCurveTable.GetByName("secp256k1")
+let curve = ECNamedCurveTable.GetByName "secp256k1"
 let domainParams = new ECDomainParameters(curve.Curve, curve.G, curve.N, curve.H, curve.GetSeed())
 
 // see https://github.com/bitcoin-core/secp256k1/issues/1180#issuecomment-1356859346
@@ -42,7 +42,8 @@ type BigInteger with
 
 type NBitcoin.Secp256k1.ECPrivKey with
     member self.ToBytes() =
-        let bytes = Array.zeroCreate 32
+        let numBytesInPrivateKey = 32
+        let bytes = Array.zeroCreate numBytesInPrivateKey
         self.WriteToSpan(bytes.AsSpan())
         bytes
 
@@ -88,11 +89,12 @@ let IsQuadVar (elem: ECFieldElement) =
         Jakobi elem >= 0
 
 let SchnorrSign (key: array<byte>) (msgHash: array<byte>) : Signature =
+    let numBytesInSha256 = 32
     let k0 = 
         let hasher = Sha256Digest()
         hasher.BlockUpdate(key, 0, key.Length)
         hasher.BlockUpdate(msgHash, 0, msgHash.Length)
-        let arr = Array.zeroCreate 32
+        let arr = Array.zeroCreate numBytesInSha256
         hasher.DoFinal(arr, 0) |> ignore
         BigInteger.FromByteArrayUnsigned(arr).Mod(scalarOrder)
 
@@ -100,16 +102,18 @@ let SchnorrSign (key: array<byte>) (msgHash: array<byte>) : Signature =
         failwith "Failure. This happens only with negligible probability."
     
     let keyScalar = BigInteger.FromByteArrayUnsigned key
-    assert(keyScalar < scalarOrder)
+    Fsdk.Misc.BetterAssert (keyScalar < scalarOrder) "key is not in range [0; scalarOrder)"
 
     let R = generatorG.Multiply(k0).Normalize()
     let k = if Jakobi R.AffineYCoord <> 1 then scalarOrder.Subtract k0 else k0
     let e = 
         let hasher = Sha256Digest()
-        hasher.BlockUpdate(R.AffineXCoord.GetEncoded(), 0, 32)
-        hasher.BlockUpdate(generatorG.Multiply(keyScalar).GetEncoded(true), 0, 33)
+        let xEncoded = R.AffineXCoord.GetEncoded()
+        hasher.BlockUpdate(xEncoded, 0, xEncoded.Length)
+        let keyScalarTimesGEncoded = generatorG.Multiply(keyScalar).GetEncoded(true)
+        hasher.BlockUpdate(keyScalarTimesGEncoded, 0, keyScalarTimesGEncoded.Length)
         hasher.BlockUpdate(msgHash, 0, msgHash.Length)
-        let arr = Array.zeroCreate 32
+        let arr = Array.zeroCreate numBytesInSha256
         hasher.DoFinal(arr, 0) |> ignore
         BigInteger.FromByteArrayUnsigned(arr).Mod(scalarOrder)
 

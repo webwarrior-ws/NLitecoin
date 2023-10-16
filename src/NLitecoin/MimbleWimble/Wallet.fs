@@ -130,11 +130,13 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
                     let spendPubKey = (calculateSpendKey i).CreatePubKey()
                     Collections.Generic.KeyValuePair(spendPubKey, i) })
 
-    new(seed: array<byte>) = KeyChain(seed, 100u)
+    static member DefaultInitialMaxUsedIndex = 100u
+
+    new(seed: array<byte>) = KeyChain(seed, KeyChain.DefaultInitialMaxUsedIndex)
 
     interface IKeyChain with
-        override self.GetStealthAddress(index) = self.GetStealthAddress(index)
-        override self.RewindOutput(output) = self.RewindOutput(output)
+        override self.GetStealthAddress index = self.GetStealthAddress index
+        override self.RewindOutput output = self.RewindOutput output
         override self.PrivateScanKey = self.ScanKey.PrivateKey
 
     member self.MaxUsedIndex : uint32 = spendPubKeysMap.Values |> Seq.max
@@ -217,7 +219,7 @@ type Wallet(keyChain: IKeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>
                     yield coin 
         |]
 
-    member self.GetBalance() : CAmount =
+    member self.GetBalance() : Amount =
         self.GetUnspentCoins() |> Array.sumBy (fun coin -> coin.Amount)
 
     member self.RewindOutput(output: Output) : Wallet * Option<Coin> =
@@ -252,7 +254,7 @@ type Wallet(keyChain: IKeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>
     
     /// For given amount, pick enough coins from available coins to cover the amount.
     /// Create recipient from leftover amount if any.
-    member private self.GetInputCoinsAndChangeRecipient(totalAmount: CAmount) : Option<array<Coin> * Option<Recipient>> =
+    member private self.GetInputCoinsAndChangeRecipient(totalAmount: Amount) : Option<array<Coin> * Option<Recipient>> =
         let coins = 
             self.GetUnspentCoins() 
             |> Array.sortBy (fun coin -> coin.Amount)
@@ -293,7 +295,7 @@ type Wallet(keyChain: IKeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>
             walletWithCoinsSpent
 
     /// Create MW pegin transaction. Litecoin transaction must have (amount + fee) as its output.
-    member self.CreatePegInTransaction (amount: CAmount) (fee: CAmount) : Wallet * Transaction =
+    member self.CreatePegInTransaction (amount: Amount) (fee: Amount) : Wallet * Transaction =
         let recipient = { Amount = amount; Address = keyChain.GetStealthAddress Coin.PeginIndex }
         
         let result =
@@ -314,8 +316,8 @@ type Wallet(keyChain: IKeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>
 
     /// Try to create MW to MW transaction using funds in wallet. If there are insufficient funds, return None.
     member self.TryCreateTransaction 
-        (amount: CAmount) 
-        (fee: CAmount) 
+        (amount: Amount) 
+        (fee: Amount) 
         (address: StealthAddress) 
         : Option<Wallet * Transaction> =
         let amountWithFee = amount + fee
@@ -346,8 +348,8 @@ type Wallet(keyChain: IKeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>
 
     /// Try to create pegout transaction using funds in wallet. If there are insufficient funds, return None.
     member self.TryCreatePegOutTransaction 
-        (amount: CAmount) 
-        (fee: CAmount) 
+        (amount: Amount) 
+        (fee: Amount) 
         (scriptPubKey: NBitcoin.Script) 
         : Option<Wallet * Transaction> =
         let amountWithFee = amount + fee

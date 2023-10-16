@@ -3,6 +3,7 @@
 open System
 open System.IO
 
+open Fsdk.Misc
 open NBitcoin
 open NBitcoin.Protocol
 open Org.BouncyCastle.Crypto.Digests
@@ -12,56 +13,55 @@ type ISerializeable =
     abstract Write: BitcoinStream -> unit
     // no Read() method as it will be static method and can't be included in interface
 
-type CAmount = int64
+/// Amount of litecoins in litoshi
+type Amount = int64
 
 [<AutoOpen>]
 module Helpers =
-    let write (stream: BitcoinStream) (object: #ISerializeable) =
-        assert(stream.Serializing)
+    let Write (stream: BitcoinStream) (object: #ISerializeable) =
+        BetterAssert stream.Serializing "stream.Serializing should be true when writing"
         object.Write stream
 
-    let writeUint256 (stream: BitcoinStream) (number: uint256) =
-        assert(stream.Serializing)
+    let WriteUint256 (stream: BitcoinStream) (number: uint256) =
+        BetterAssert stream.Serializing "stream.Serializing should be true when writing"
         number.AsBitcoinSerializable().ReadWrite stream
 
-    let readUint256 (stream: BitcoinStream) : uint256 =
-        assert(not stream.Serializing)
+    let ReadUint256 (stream: BitcoinStream) : uint256 =
+        BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
         let tempValue = uint256.MutableUint256()
         tempValue.ReadWrite stream
         tempValue.Value
     
-    let readArray<'T> (stream: BitcoinStream) (readFunc : BitcoinStream -> 'T) : array<'T> =
+    let ReadArray<'T> (stream: BitcoinStream) (readFunc : BitcoinStream -> 'T) : array<'T> =
         let len = int <| VarInt.StaticRead stream
         Array.init len (fun _ -> readFunc stream)
 
-    let writeArray<'T when 'T :> ISerializeable> (stream: BitcoinStream) (arr: array<'T>) =
+    let WriteArray<'T when 'T :> ISerializeable> (stream: BitcoinStream) (arr: array<'T>) =
         let len = uint64 arr.Length
         VarInt.StaticWrite(stream, len)
         for each in arr do
             each.Write stream
 
-    let readByteArray (stream: BitcoinStream) : array<byte> =
-        let refCell = ref 0uy
-        readArray 
+    let ReadByteArray (stream: BitcoinStream) : array<byte> =
+        ReadArray 
             stream 
             (fun s -> 
-                s.ReadWrite refCell
-                refCell.Value)
+                s.ReadWrite Unchecked.defaultof<byte>)
 
-    let writeByteArray (stream: BitcoinStream) (arr: array<byte>) =
+    let WriteByteArray (stream: BitcoinStream) (arr: array<byte>) =
         let len = uint64 arr.Length
         VarInt.StaticWrite(stream, len)
         stream.ReadWrite arr
 
-    let readCAmount (stream: BitcoinStream) : CAmount =
+    let ReadAmount (stream: BitcoinStream) : Amount =
         let amountRef = ref 0UL
         stream.ReadWriteAsCompactVarInt amountRef
         amountRef.Value |> int64
 
-    let writeCAmount (stream: BitcoinStream) (amount: CAmount) =
+    let WriteAmount (stream: BitcoinStream) (amount: Amount) =
         stream.ReadWriteAsCompactVarInt(amount |> uint64 |> ref)
 
-    let convertBits (fromBits: int) (toBits: int) (input: array<byte>) : array<byte> =
+    let ConvertBits (fromBits: int) (toBits: int) (input: array<byte>) : array<byte> =
         let maxV = (1u <<< toBits) - 1u
         let maxAcc = (1u <<< (fromBits + toBits - 1)) - 1u
         [|
@@ -84,12 +84,12 @@ type BlindingFactor =
         | BlindingFactor number -> number
 
     static member Read(stream: BitcoinStream) : BlindingFactor =
-        BlindingFactor(readUint256 stream)
+        BlindingFactor(ReadUint256 stream)
 
     interface ISerializeable with
         member self.Write(stream) =
             match self with
-            | BlindingFactor number -> number |> writeUint256 stream
+            | BlindingFactor number -> number |> WriteUint256 stream
 
 type Hash = 
     | Hash of uint256
@@ -101,12 +101,12 @@ type Hash =
         self.ToUInt256().ToBytes()
 
     static member Read(stream: BitcoinStream) : Hash =
-        readUint256 stream |> Hash
+        ReadUint256 stream |> Hash
 
     interface ISerializeable with
         member self.Write(stream) =
             match self with
-            | Hash number -> number |> writeUint256 stream
+            | Hash number -> number |> WriteUint256 stream
 
 module internal HashTags =
     let ADDRESS = 'A'
@@ -172,14 +172,14 @@ type BigInt(bytes: array<byte>) =
         sprintf "BigInt %s" (encoder.EncodeData bytes)
 
     static member Read(stream: BitcoinStream) (numBytes: int) : BigInt =
-        assert(not stream.Serializing)
+        BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
         let result : array<uint8> = Array.zeroCreate numBytes
         stream.ReadWrite result
         BigInt result
 
     interface ISerializeable with
         member self.Write(stream) =
-            assert(stream.Serializing)
+            BetterAssert stream.Serializing "stream.Serializing should be true when writing"
             stream.ReadWrite self.Data
 
 type PedersenCommitment = 
@@ -247,10 +247,8 @@ type Input =
     }
     
     static member Read(stream: BitcoinStream) : Input =
-        assert(not stream.Serializing)
-        let featuresByte = ref 0uy
-        stream.ReadWrite featuresByte
-        let features = featuresByte.Value |> int |> enum<InputFeatures>
+        BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
+        let features = (stream.ReadWrite Unchecked.defaultof<byte>) |> int |> enum<InputFeatures>
         let outputId = Hash.Read stream
         let commitment = PedersenCommitment.Read stream
         let outputPubKey = PublicKey.Read stream
@@ -263,7 +261,7 @@ type Input =
 
         let extraData =
             if int(features &&& InputFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
-                readByteArray stream
+                ReadByteArray stream
             else
                 Array.empty
 
@@ -284,21 +282,20 @@ type Input =
 
     interface ISerializeable with
         member self.Write(stream) = 
-            assert(stream.Serializing)
+            BetterAssert stream.Serializing "stream.Serializing should be true when writing"
 
-            let featuresByte = ref (uint8 self.Features)
-            stream.ReadWrite featuresByte
-            write stream self.OutputID
-            write stream self.Commitment
-            write stream self.OutputPublicKey
+            stream.ReadWrite (byte self.Features) |> ignore
+            Write stream self.OutputID
+            Write stream self.Commitment
+            Write stream self.OutputPublicKey
 
             if int(self.Features &&& InputFeatures.STEALTH_KEY_FEATURE_BIT) <> 0 then
-                write stream self.InputPublicKey.Value
+                Write stream self.InputPublicKey.Value
 
             if int(self.Features &&& InputFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
-                writeByteArray stream self.ExtraData
+                WriteByteArray stream self.ExtraData
 
-            write stream self.Signature
+            Write stream self.Signature
 
     interface IComparable<Input> with
         member self.CompareTo(other) =
@@ -326,24 +323,21 @@ type OutputMessage =
         ExtraData: array<uint8>
     }
     static member Read(stream: BitcoinStream) : OutputMessage =
-        assert(not stream.Serializing)
+        BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
 
-        let featuresByte = ref 0uy
-        stream.ReadWrite featuresByte
-        let features = featuresByte.Value |> int |> enum<OutputFeatures>
+        let featuresByte = stream.ReadWrite Unchecked.defaultof<byte>
+        let features = featuresByte |> int |> enum<OutputFeatures>
         
         let standardFields =
             if int(features &&& OutputFeatures.STANDARD_FIELDS_FEATURE_BIT) <> 0 then
                 let pubKey = PublicKey.Read stream
-                let viewTag = ref 0uy
-                stream.ReadWrite viewTag
-                let maskedValue = ref 0UL
-                stream.ReadWrite maskedValue
+                let viewTag = stream.ReadWrite Unchecked.defaultof<byte>
+                let maskedValue = stream.ReadWrite Unchecked.defaultof<uint64>
                 let maskedNonce = BigInt.Read stream OutputMessageStandardFields.MaskedNonceNumBytes
                 {
                     KeyExchangePubkey = pubKey
-                    ViewTag = viewTag.Value
-                    MaskedValue = maskedValue.Value
+                    ViewTag = viewTag
+                    MaskedValue = maskedValue
                     MaskedNonce = maskedNonce
                 }
                 |> Some
@@ -352,7 +346,7 @@ type OutputMessage =
 
         let extraData =
             if int(features &&& OutputFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
-                readByteArray stream
+                ReadByteArray stream
             else
                 Array.empty
 
@@ -364,19 +358,19 @@ type OutputMessage =
 
     interface ISerializeable with
         member self.Write(stream) = 
-            assert(stream.Serializing)
+            BetterAssert stream.Serializing "stream.Serializing should be true when writing"
             
             stream.ReadWrite(self.Features |> uint8) |> ignore
 
             if int(self.Features &&& OutputFeatures.STANDARD_FIELDS_FEATURE_BIT) <> 0 then
                 let fields = self.StandardFields.Value
-                write stream fields.KeyExchangePubkey
+                Write stream fields.KeyExchangePubkey
                 stream.ReadWrite fields.ViewTag |> ignore
                 stream.ReadWrite fields.MaskedValue |> ignore
                 (fields.MaskedNonce :> ISerializeable).Write stream
 
             if int(self.Features &&& OutputFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
-                writeByteArray stream self.ExtraData
+                WriteByteArray stream self.ExtraData
 
 type RangeProof =
     | RangeProof of array<uint8>
@@ -384,17 +378,17 @@ type RangeProof =
     static member Size = 675
 
     static member Read(stream: BitcoinStream) : RangeProof =
-        assert(not stream.Serializing)
+        BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
         let bytes = Array.zeroCreate<byte> RangeProof.Size
         stream.ReadWrite bytes
         RangeProof bytes
 
     interface ISerializeable with
         member self.Write(stream) = 
-            assert(stream.Serializing)
+            BetterAssert stream.Serializing "stream.Serializing should be true when writing"
             match self with
             | RangeProof bytes -> 
-                assert(bytes.Length = RangeProof.Size)
+                BetterAssert (bytes.Length = RangeProof.Size) "incorrect proof size"
                 stream.ReadWrite bytes
 
 type StealthAddress =
@@ -418,7 +412,7 @@ type StealthAddress =
         use memoryStream = 
             let bitsInByte = 8
             let bitsExpectedByBech32Encoder = 5
-            new MemoryStream(bytes |> Array.skip 1 |> convertBits bitsExpectedByBech32Encoder bitsInByte)
+            new MemoryStream(bytes |> Array.skip 1 |> ConvertBits bitsExpectedByBech32Encoder bitsInByte)
         let bitcoinStream = new BitcoinStream(memoryStream, false)
         {
             ScanPubKey = PublicKey.Read bitcoinStream
@@ -434,7 +428,7 @@ type StealthAddress =
             let bitsExpectedByBech32Encoder = 5
             Array.append
                 (Array.singleton 0uy)
-                (memoryStream.ToArray() |> convertBits bitsInByte bitsExpectedByBech32Encoder)
+                (memoryStream.ToArray() |> ConvertBits bitsInByte bitsExpectedByBech32Encoder)
         
         DataEncoders.Encoders.Bech32(StealthAddress.Bech32Prefix)
             .EncodeData(data, DataEncoders.Bech32EncodingType.BECH32)
@@ -496,7 +490,7 @@ type Output =
         Signature: Signature
     }
     static member Read(stream: BitcoinStream) : Output =
-        assert(not stream.Serializing)
+        BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
         {
             Commitment = PedersenCommitment.Read stream
             SenderPublicKey = PublicKey.Read stream
@@ -507,22 +501,22 @@ type Output =
         }
 
     interface ISerializeable with
-        member self.Write(stream) = 
-            assert(stream.Serializing)
+        member self.Write stream = 
+            BetterAssert stream.Serializing "stream.Serializing should be true when writing"
 
-            write stream self.Commitment
-            write stream self.SenderPublicKey
-            write stream self.ReceiverPublicKey
-            write stream self.Message
-            write stream self.RangeProof
-            write stream self.Signature
+            Write stream self.Commitment
+            Write stream self.SenderPublicKey
+            Write stream self.ReceiverPublicKey
+            Write stream self.Message
+            Write stream self.RangeProof
+            Write stream self.Signature
 
     interface IComparable<Output> with
-        member self.CompareTo(other) =
+        member self.CompareTo other =
             compare (Hasher.CalculateHash self) (Hasher.CalculateHash other)
 
     interface IComparable with
-        member self.CompareTo(other) =
+        member self.CompareTo other =
             match other with
             | :? Output as output -> (self :> IComparable<Output>).CompareTo output
             | _ -> 0
@@ -556,12 +550,12 @@ module KernelFeatures =
 
 type PegOutCoin =
     {
-        Amount: CAmount
+        Amount: Amount
         ScriptPubKey: NBitcoin.Script // ?
     }
     static member Read(stream: BitcoinStream) : PegOutCoin =
-        assert(not stream.Serializing)
-        let amount = readCAmount stream
+        BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
+        let amount = ReadAmount stream
         let scriptPubKeyRef = ref NBitcoin.Script.Empty
         stream.ReadWrite scriptPubKeyRef
         {
@@ -571,16 +565,16 @@ type PegOutCoin =
 
     interface ISerializeable with
         member self.Write(stream) = 
-            assert(stream.Serializing)
-            writeCAmount stream self.Amount
+            BetterAssert stream.Serializing "stream.Serializing should be true when writing"
+            WriteAmount stream self.Amount
             stream.ReadWrite self.ScriptPubKey |> ignore
 
 [<CustomComparison; StructuralEquality>]
 type Kernel =
     {
         Features: KernelFeatures
-        Fee: Option<CAmount>
-        Pegin: Option<CAmount>
+        Fee: Option<Amount>
+        Pegin: Option<Amount>
         Pegouts: array<PegOutCoin>
         LockHeight: Option<int32>
         StealthExcess: Option<PublicKey>
@@ -592,34 +586,30 @@ type Kernel =
         Signature: Signature
     }
     static member Read(stream: BitcoinStream) : Kernel =
-        assert(not stream.Serializing)
-        let featuresRef = ref 0uy
-        stream.ReadWrite featuresRef
-        let features = featuresRef.Value |> int |> enum<KernelFeatures>
+        BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
+        let features = (stream.ReadWrite Unchecked.defaultof<byte>) |> int |> enum<KernelFeatures>
 
         let fee =
             if int(features &&& KernelFeatures.FEE_FEATURE_BIT) <> 0 then
-                Some <| readCAmount stream
+                Some <| ReadAmount stream
             else
                 None
 
         let pegin =
             if int(features &&& KernelFeatures.PEGIN_FEATURE_BIT) <> 0 then
-                Some <| readCAmount stream
+                Some <| ReadAmount stream
             else
                 None
 
         let pegouts =
             if int(features &&& KernelFeatures.PEGOUT_FEATURE_BIT) <> 0 then
-                readArray stream PegOutCoin.Read
+                ReadArray stream PegOutCoin.Read
             else
                 Array.empty
 
         let lockHeight =
             if int(features &&& KernelFeatures.HEIGHT_LOCK_FEATURE_BIT) <> 0 then
-                let valueRef = ref 0
-                stream.ReadWrite valueRef
-                Some valueRef.Value
+                Some <| stream.ReadWrite Unchecked.defaultof<int>
             else
                 None
 
@@ -631,7 +621,7 @@ type Kernel =
         
         let extraData =
             if int(features &&& KernelFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
-                readByteArray stream
+                ReadByteArray stream
             else
                 Array.empty
 
@@ -650,25 +640,24 @@ type Kernel =
             Signature = signature
         }
 
-    member self.GetSupplyChange() : CAmount =
+    member self.GetSupplyChange() : Amount =
         let pegOutAmount = self.Pegouts |> Array.sumBy (fun pegOut -> pegOut.Amount)
         (self.Pegin |> Option.defaultValue 0L) - (self.Fee |> Option.defaultValue 0L) - pegOutAmount
 
     interface ISerializeable with
         member self.Write(stream) = 
-            assert(stream.Serializing)
-
-            let featuresRef = self.Features |> uint8 |> ref
-            stream.ReadWrite featuresRef
+            BetterAssert stream.Serializing "stream.Serializing should be true when writing"
+            
+            stream.ReadWrite (self.Features |> byte) |> ignore
 
             if int(self.Features &&& KernelFeatures.FEE_FEATURE_BIT) <> 0 then
-                writeCAmount stream self.Fee.Value
+                WriteAmount stream self.Fee.Value
 
             if int(self.Features &&& KernelFeatures.PEGIN_FEATURE_BIT) <> 0 then
-                writeCAmount stream self.Pegin.Value
+                WriteAmount stream self.Pegin.Value
 
             if int(self.Features &&& KernelFeatures.PEGOUT_FEATURE_BIT) <> 0 then
-                writeArray stream self.Pegouts
+                WriteArray stream self.Pegouts
             
             if int(self.Features &&& KernelFeatures.HEIGHT_LOCK_FEATURE_BIT) <> 0 then
                 stream.ReadWrite self.LockHeight.Value |> ignore
@@ -677,7 +666,7 @@ type Kernel =
                 (self.StealthExcess.Value :> ISerializeable).Write stream
 
             if int(self.Features &&& KernelFeatures.EXTRA_DATA_FEATURE_BIT) <> 0 then
-                writeByteArray stream self.ExtraData
+                WriteByteArray stream self.ExtraData
 
             (self.Excess :> ISerializeable).Write stream
             (self.Signature :> ISerializeable).Write stream
@@ -704,16 +693,16 @@ type TxBody =
     }
     static member Read(stream: BitcoinStream) : TxBody =
         {
-            Inputs = readArray stream Input.Read
-            Outputs = readArray stream Output.Read
-            Kernels = readArray stream Kernel.Read
+            Inputs = ReadArray stream Input.Read
+            Outputs = ReadArray stream Output.Read
+            Kernels = ReadArray stream Kernel.Read
         }
 
     interface ISerializeable with
-        member self.Write(stream) = 
-            writeArray stream self.Inputs
-            writeArray stream self.Outputs
-            writeArray stream self.Kernels
+        member self.Write stream = 
+            WriteArray stream self.Inputs
+            WriteArray stream self.Outputs
+            WriteArray stream self.Kernels
 
 type Transaction =
     {
@@ -743,9 +732,9 @@ type Transaction =
 
     interface ISerializeable with
         member self.Write(stream) = 
-            self.KernelOffset |> write stream
-            self.StealthOffset |> write stream
-            self.Body |> write stream
+            self.KernelOffset |> Write stream
+            self.StealthOffset |> Write stream
+            self.Body |> Write stream
 
 /// Represents an output owned by the wallet, and the keys necessary to spend it.
 /// See https://github.com/litecoin-project/litecoin/blob/master/src/libmw/include/mw/models/wallet/Coin.h
@@ -754,7 +743,7 @@ type Coin =
         AddressIndex: uint32
         SpendKey: Option<uint256>
         Blind: Option<BlindingFactor>
-        Amount: CAmount
+        Amount: Amount
         OutputId: Hash
         SenderKey: Option<uint256>
         Address: Option<StealthAddress>
@@ -784,6 +773,6 @@ type Coin =
 
 type Recipient =
     {
-        Amount: CAmount
+        Amount: Amount
         Address: StealthAddress
     }

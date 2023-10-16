@@ -28,7 +28,7 @@ let DeserializeCommitment (commitment: PedersenCommitment) : ECPoint =
         point
 
 /// Generates a pedersen commitment: *commit = blind * G + value * H. The blinding factor is 32 bytes.
-let Commit (value: CAmount) (blind: BlindingFactor) : PedersenCommitment =
+let Commit (value: Amount) (blind: BlindingFactor) : PedersenCommitment =
     let result =
         let blind = blind.ToUInt256().ToBytes() |> BigInteger.FromByteArrayUnsigned
         let a = generatorG.Multiply(blind)
@@ -39,7 +39,7 @@ let Commit (value: CAmount) (blind: BlindingFactor) : PedersenCommitment =
     PedersenCommitment(BigInt bytes)
 
 /// Calculates the blinding factor x' = x + SHA256(xG+vH | xJ), used in the switch commitment x'G+vH.
-let BlindSwitch (blindingFactor: BlindingFactor) (amount: CAmount) : BlindingFactor =
+let BlindSwitch (blindingFactor: BlindingFactor) (amount: Amount) : BlindingFactor =
     let hasher = Sha256Digest()
 
     let x = blindingFactor.ToUInt256().ToBytes() |> BigInteger.FromByteArrayUnsigned

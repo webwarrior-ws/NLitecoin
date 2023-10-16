@@ -249,17 +249,23 @@ let private CreateOutputs (recipients: seq<Recipient>) : Outputs =
 let private CreateKernel
     (blind: BlindingFactor) 
     (stealthBlind: BlindingFactor) 
-    (fee: CAmount)
-    (peginAmount: Option<CAmount>)
+    (fee: Amount)
+    (peginAmount: Option<Amount>)
     (pegouts: array<PegOutCoin>) 
     : Kernel =
     let featuresByte =
-        (if fee > 0L then KernelFeatures.FEE_FEATURE_BIT else enum 0) |||
-        (match peginAmount with 
-            | Some value when value > 0L -> KernelFeatures.PEGIN_FEATURE_BIT 
-            | _ -> enum 0) |||
-        (if pegouts.Length > 0 then KernelFeatures.PEGOUT_FEATURE_BIT else enum 0) |||
-        KernelFeatures.STEALTH_EXCESS_FEATURE_BIT
+        (if fee > 0L then
+             KernelFeatures.FEE_FEATURE_BIT
+         else
+             enum 0)
+        ||| (match peginAmount with
+             | Some value when value > 0L -> KernelFeatures.PEGIN_FEATURE_BIT
+             | _ -> enum 0)
+        ||| (if pegouts.Length > 0 then
+                 KernelFeatures.PEGOUT_FEATURE_BIT
+             else
+                 enum 0)
+        ||| KernelFeatures.STEALTH_EXCESS_FEATURE_BIT
 
     let excessCommit = Pedersen.Commit 0L blind
 
@@ -278,14 +284,14 @@ let private CreateKernel
         let stream = BitcoinStream(byteStream, true)
         
         stream.ReadWrite (featuresByte |> uint8) |> ignore
-        Helpers.write stream excessCommit
+        Helpers.Write stream excessCommit
         stream.ReadWriteAsVarInt (fee |> uint64 |> ref)
         match peginAmount with
         | Some amount -> stream.ReadWriteAsVarInt (amount |> uint64 |> ref)
         | None -> ()
         if pegouts.Length > 0 then
-            Helpers.writeArray stream pegouts
-        Helpers.write stream (BigInt stealthExcess)
+            Helpers.WriteArray stream pegouts
+        Helpers.Write stream (BigInt stealthExcess)
 
         let hasher = Hasher()
         hasher.Write(byteStream.ToArray())
@@ -312,8 +318,8 @@ let BuildTransaction
     (inputCoins: array<Coin>)
     (recipients: array<Recipient>)
     (pegouts: array<PegOutCoin>)
-    (peginAmount: Option<CAmount>)
-    (fee: CAmount)
+    (peginAmount: Option<Amount>)
+    (fee: Amount)
     : TransactionBuildResult =
     let pegoutTotal = pegouts |> Array.sumBy (fun pegout -> pegout.Amount)
     let recipientTotal = recipients |> Array.sumBy (fun recipient -> recipient.Amount)
@@ -328,7 +334,7 @@ let BuildTransaction
                 pegoutTotal
                 recipientTotal
                 fee)
-        raise (IncorrectBalanceException msg)
+        raise <| IncorrectBalanceException msg
 
     let inputs = CreateInputs inputCoins
     let outputs = CreateOutputs recipients

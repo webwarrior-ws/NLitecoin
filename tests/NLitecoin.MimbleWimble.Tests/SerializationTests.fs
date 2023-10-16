@@ -137,7 +137,7 @@ type Generators =
         { new Arbitrary<PegOutCoin>() with
             override _.Generator =
                 gen {
-                    let! camount = Arb.generate<CAmount>
+                    let! camount = Arb.generate<Amount>
                     return {
                         Amount = camount
                         ScriptPubKey = NBitcoin.Script.Empty
@@ -152,12 +152,12 @@ type Generators =
                     let features = fetauresList |> List.fold (fun a b -> a ||| b) (enum<KernelFeatures> 0)
                     let! fee =
                         if int(features &&& KernelFeatures.FEE_FEATURE_BIT) <> 0 then
-                            Arb.generate<CAmount> |> Gen.map Some
+                            Arb.generate<Amount> |> Gen.map Some
                         else
                             Gen.constant None
                     let! pegin =
                         if int(features &&& KernelFeatures.PEGIN_FEATURE_BIT) <> 0 then
-                            Arb.generate<CAmount> |> Gen.map Some
+                            Arb.generate<Amount> |> Gen.map Some
                         else
                             Gen.constant None
                     let! pegouts =
@@ -199,11 +199,11 @@ type Generators =
 let Uint256Roundtrip(number: uint256) =
     use memoryStream = new MemoryStream()
     let writeStream = new BitcoinStream(memoryStream, true)
-    Helpers.writeUint256 writeStream number
+    Helpers.WriteUint256 writeStream number
     memoryStream.Flush()
     memoryStream.Position <- 0
     let readStream = new BitcoinStream(memoryStream, false)
-    Helpers.readUint256 readStream = number
+    Helpers.ReadUint256 readStream = number
 
 [<Property(Arbitrary=[|typeof<Generators>|])>]
 let PedersenCommitmentRoundtrip(commitment: PedersenCommitment) =
