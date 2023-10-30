@@ -69,3 +69,13 @@ let ParsePegOutTransaction () =
 
     Validation.ValidateTransactionBody transaction.Body
     Validation.ValidateKernelSumForTransaction transaction
+
+[<Test>]
+let ParseBlockWithHogExTransaction () =
+    // Check if HogEx transaction, which has mweb extension flag but doesn't contain MW transaction, is pardsed correctly
+    let blockData = IO.File.ReadAllText "block1.txt"
+    let block = NBitcoin.Block.Parse(blockData, NLitecoin.Litecoin.Instance.Mainnet)
+    // HogEx transaction must be at the end of the block
+    // (see https://github.com/litecoin-project/lips/blob/master/lip-0002.mediawiki#user-content-Integrating_Transaction_ExtTxn)
+    let lastTransaction = block.Transactions.[block.Transactions.Count - 1] :?> NLitecoin.LitecoinTransaction
+    Assert.IsTrue(lastTransaction.MimbleWimbleTransaction.IsNone)

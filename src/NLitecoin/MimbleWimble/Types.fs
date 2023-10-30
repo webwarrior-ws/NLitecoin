@@ -712,7 +712,6 @@ type Transaction =
         // The transaction body.
         Body: TxBody
     }
-    static member Version = 1uy
 
     /// Parse hex-encoded MimbleWimble transaction
     static member ParseString(txString: string) : Transaction =

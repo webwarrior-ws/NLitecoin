@@ -90,9 +90,12 @@ type LitecoinTransaction() =
             flags <- flags ^^^ 1uy
         
         if (flags &&& mwebExtensionTxFlag) <> 0uy then
-            let version = ref 0uy
-            stream.ReadWrite version
-            self.MimbleWimbleTransaction <- Some(MimbleWimble.Transaction.Read stream)
+            let isMWTransactionPresent = stream.ReadWrite Unchecked.defaultof<byte>
+            if isMWTransactionPresent <> 0uy then
+                self.MimbleWimbleTransaction <- Some(MimbleWimble.Transaction.Read stream)
+            else
+                // HogEx transaction
+                self.MimbleWimbleTransaction <- None
             flags <- flags ^^^ 8uy
 
         if flags <> 0uy then
@@ -142,7 +145,8 @@ type LitecoinTransaction() =
 
         match self.MimbleWimbleTransaction with
         | Some mwebTransaction -> 
-            stream.ReadWrite MimbleWimble.Transaction.Version |> ignore
+            let valueIsPresentMarker = 1uy
+            stream.ReadWrite valueIsPresentMarker |> ignore
             (mwebTransaction :> MimbleWimble.ISerializeable).Write stream
         | None -> ()
 
