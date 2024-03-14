@@ -775,3 +775,50 @@ type Recipient =
         Amount: Amount
         Address: StealthAddress
     }
+
+type MwebBlockHeader =
+    {
+        Height: int32
+        OutputRoot: uint256
+        KernelRoot: uint256
+        LeafsetRoot: uint256
+        KernelOffset: BlindingFactor
+        StealthOffset: BlindingFactor
+        OutputMmrSize: uint64
+        KernelMmrSize: uint64
+    }
+
+/// MWEB peer-to-peer messages as defined in https://github.com/DavidBurkett/lips/blob/LIP0006/LIP-0006.mediawiki
+module MwebP2P =
+    type MwebOutputFromat =
+        | FULL_UTXO = 0x00
+        | HASH_ONLY = 0x01
+        | COMPACT_UTXO = 0x02
+
+    type MwebUtxosRequest =
+        {
+            BlockHash: uint256
+            StartIndex: uint64
+            NumRequested: uint16
+            OutputFormat: MwebOutputFromat
+        }
+
+    type MwebUtxos<'TMwebUtxo> =
+        {
+            OutputFormat: MwebOutputFromat
+            Utxos: array<'TMwebUtxo>
+            ParentHashes: array<Hash>
+        }
+
+    type HogExAndMwebHeader =
+        {
+            Merkle: MerkleBlock
+            HogEx: NBitcoin.Transaction
+            MwebHeader: MwebBlockHeader
+        }
+    
+    type MwebLeafset =
+        {
+            BlockHash: uint256
+            Leafset: array<uint8>
+        }
