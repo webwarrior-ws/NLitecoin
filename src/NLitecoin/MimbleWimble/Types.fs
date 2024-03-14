@@ -787,9 +787,53 @@ type MwebBlockHeader =
         OutputMmrSize: uint64
         KernelMmrSize: uint64
     }
+    interface ISerializeable with
+        member self.Write stream = 
+            BetterAssert stream.Serializing "stream.Serializing should be true when writing"
+
+            self.Height |> int64 |> WriteAmount stream
+            self.OutputRoot |> WriteUint256 stream
+            self.KernelRoot |> WriteUint256 stream
+            self.LeafsetRoot |> WriteUint256 stream
+            self.KernelOffset |> Write stream
+            self.StealthOffset |> Write stream
+            self.OutputMmrSize |> int64 |> WriteAmount stream
+            self.KernelMmrSize |> int64 |> WriteAmount stream
+
+    static member Read(stream: BitcoinStream) : MwebBlockHeader =
+        BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
+        {
+            Height = ReadAmount stream |> int32
+            OutputRoot = ReadUint256 stream
+            KernelRoot = ReadUint256 stream
+            LeafsetRoot = ReadUint256 stream
+            KernelOffset = BlindingFactor.Read stream
+            StealthOffset = BlindingFactor.Read stream
+            OutputMmrSize = ReadAmount stream |> uint64
+            KernelMmrSize = ReadAmount stream |> uint64
+        }
 
 /// MWEB peer-to-peer messages as defined in https://github.com/DavidBurkett/lips/blob/LIP0006/LIP-0006.mediawiki
 module MwebP2P =
+    /// Same as Output, but stores RangeProof hash instead of RangeProof itself
+    type CompactUtxo(output: Output) =
+        interface ISerializeable with
+            member self.Write stream = 
+                (output :> ISerializeable).Write stream
+
+        static member Read(stream: BitcoinStream) : CompactUtxo =
+            CompactUtxo(Output.Read stream)
+            
+        member self.GetOutputID() : Hash =
+            let hasher = Hasher()
+            hasher.Append output.Commitment
+            hasher.Append output.SenderPublicKey
+            hasher.Append output.ReceiverPublicKey
+            hasher.Append(Hasher.CalculateHash output.Message)
+            hasher.Append output.RangeProof
+            hasher.Append output.Signature
+            hasher.Hash()
+    
     type MwebOutputFromat =
         | FULL_UTXO = 0x00
         | HASH_ONLY = 0x01
@@ -802,13 +846,55 @@ module MwebP2P =
             NumRequested: uint16
             OutputFormat: MwebOutputFromat
         }
+        interface ISerializeable with
+            member self.Write stream = 
+                BetterAssert stream.Serializing "stream.Serializing should be true when writing"
 
-    type MwebUtxos<'TMwebUtxo> =
+                self.BlockHash |> WriteUint256 stream
+                VarInt.StaticWrite(stream, self.StartIndex)
+                stream.ReadWrite self.NumRequested |> ignore
+                stream.ReadWrite(byte self.OutputFormat) |> ignore
+
+        static member Read(stream: BitcoinStream) : MwebUtxosRequest =
+            BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
+            {
+                BlockHash = ReadUint256 stream
+                StartIndex = VarInt.StaticRead stream
+                NumRequested = stream.ReadWrite 0us
+                OutputFormat = stream.ReadWrite 0uy |> int32 |> enum
+            }
+
+    type MwebUtxos<'TMwebUtxo when 'TMwebUtxo :> ISerializeable> =
         {
             OutputFormat: MwebOutputFromat
             Utxos: array<'TMwebUtxo>
             ParentHashes: array<Hash>
         }
+        interface ISerializeable with
+            member self.Write stream = 
+                BetterAssert stream.Serializing "stream.Serializing should be true when writing"
+
+                stream.ReadWrite(byte self.OutputFormat) |> ignore
+                WriteArray stream self.Utxos
+                WriteArray stream self.ParentHashes
+
+        static member Read (stream: BitcoinStream) (utxoReadFunction: BitcoinStream -> 'TMwebUtxo) : MwebUtxos<'TMwebUtxo> =
+            BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
+            let format = stream.ReadWrite 0uy |> int32 |> enum
+            let formatIsCorrect =
+                match format with
+                | MwebOutputFromat.FULL_UTXO -> typeof<'TMwebUtxo> = typeof<Output>
+                | MwebOutputFromat.HASH_ONLY -> typeof<'TMwebUtxo> = typeof<Hash>
+                | MwebOutputFromat.COMPACT_UTXO -> typeof<'TMwebUtxo> = typeof<CompactUtxo>
+                | unknownFormat -> failwithf "Unknown output format value: %A" unknownFormat
+            if not formatIsCorrect then
+                failwithf "Incorrect output format: got %A, expected %s" format typeof<'TMwebUtxo>.Name
+            else
+                {
+                    OutputFormat = format
+                    Utxos = ReadArray stream utxoReadFunction
+                    ParentHashes = ReadArray stream Hash.Read
+                }
 
     type HogExAndMwebHeader =
         {
@@ -816,9 +902,36 @@ module MwebP2P =
             HogEx: NBitcoin.Transaction
             MwebHeader: MwebBlockHeader
         }
+        interface ISerializeable with
+            member self.Write stream = 
+                BetterAssert stream.Serializing "stream.Serializing should be true when writing"
+
+                stream.ReadWrite self.Merkle |> ignore
+                stream.ReadWrite self.HogEx |> ignore
+                self.MwebHeader |> Write stream
+
+        static member Read(stream: BitcoinStream) : HogExAndMwebHeader =
+            BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
+            let deuumyMerkleRef = MerkleBlock()
+            let dummyHogExRef = NBitcoin.Transaction.Create(Network.Main)
+            {
+                Merkle = stream.ReadWrite deuumyMerkleRef
+                HogEx = stream.ReadWrite dummyHogExRef
+                MwebHeader = MwebBlockHeader.Read stream
+            }
     
     type MwebLeafset =
         {
             BlockHash: uint256
             Leafset: array<uint8>
         }
+        interface ISerializeable with
+            member self.Write stream = 
+                self.BlockHash |> WriteUint256 stream
+                self.Leafset |> WriteByteArray stream
+
+        static member Read(stream: BitcoinStream) : MwebLeafset =
+            {
+                BlockHash = ReadUint256 stream
+                Leafset = ReadByteArray stream
+            }
