@@ -815,6 +815,10 @@ type MwebBlockHeader =
 
 /// MWEB peer-to-peer messages as defined in https://github.com/DavidBurkett/lips/blob/LIP0006/LIP-0006.mediawiki
 module MwebP2P =
+    // new message codes to be used as inventory type in getdata requests
+    let MSG_MWEB_HEADER = Enum.ToObject(typeof<InventoryType>, 0x20000008) :?> InventoryType
+    let MSG_MWEB_LEAFSET = Enum.ToObject(typeof<InventoryType>, 0x20000009) :?> InventoryType
+
     /// Same as Output, but stores RangeProof hash instead of RangeProof itself
     type CompactUtxo(output: Output) =
         interface ISerializeable with
@@ -866,7 +870,6 @@ module MwebP2P =
 
     type MwebUtxos<'TMwebUtxo when 'TMwebUtxo :> ISerializeable> =
         {
-            OutputFormat: MwebOutputFromat
             Utxos: array<'TMwebUtxo>
             ParentHashes: array<Hash>
         }
@@ -874,27 +877,27 @@ module MwebP2P =
             member self.Write stream = 
                 BetterAssert stream.Serializing "stream.Serializing should be true when writing"
 
-                stream.ReadWrite(byte self.OutputFormat) |> ignore
+                stream.ReadWrite(byte MwebUtxos<'TMwebUtxo>.OutputFormat) |> ignore
                 WriteArray stream self.Utxos
                 WriteArray stream self.ParentHashes
 
+        /// Assumes that format has already been read and is used to determine correct value of 'TMwebUtxo type parameter
         static member Read (stream: BitcoinStream) (utxoReadFunction: BitcoinStream -> 'TMwebUtxo) : MwebUtxos<'TMwebUtxo> =
             BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
-            let format = stream.ReadWrite 0uy |> int32 |> enum
-            let formatIsCorrect =
-                match format with
-                | MwebOutputFromat.FULL_UTXO -> typeof<'TMwebUtxo> = typeof<Output>
-                | MwebOutputFromat.HASH_ONLY -> typeof<'TMwebUtxo> = typeof<Hash>
-                | MwebOutputFromat.COMPACT_UTXO -> typeof<'TMwebUtxo> = typeof<CompactUtxo>
-                | unknownFormat -> failwithf "Unknown output format value: %A" unknownFormat
-            if not formatIsCorrect then
-                failwithf "Incorrect output format: got %A, expected %s" format typeof<'TMwebUtxo>.Name
+            {
+                Utxos = ReadArray stream utxoReadFunction
+                ParentHashes = ReadArray stream Hash.Read
+            }
+
+        static member OutputFormat : MwebOutputFromat =
+            if typeof<'TMwebUtxo> = typeof<Output> then
+                MwebOutputFromat.FULL_UTXO 
+            elif typeof<'TMwebUtxo> = typeof<Hash> then
+                MwebOutputFromat.HASH_ONLY
+            elif typeof<'TMwebUtxo> = typeof<CompactUtxo> then
+                MwebOutputFromat.COMPACT_UTXO
             else
-                {
-                    OutputFormat = format
-                    Utxos = ReadArray stream utxoReadFunction
-                    ParentHashes = ReadArray stream Hash.Read
-                }
+                failwithf "Unsupported MWEB Utxo type: %A" typeof<'TMwebUtxo>
 
     type HogExAndMwebHeader =
         {
@@ -912,10 +915,10 @@ module MwebP2P =
 
         static member Read(stream: BitcoinStream) : HogExAndMwebHeader =
             BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
-            let deuumyMerkleRef = MerkleBlock()
-            let dummyHogExRef = NBitcoin.Transaction.Create(Network.Main)
+            let dummyMerkleRef : MerkleBlock = null
+            let dummyHogExRef : NBitcoin.Transaction = null
             {
-                Merkle = stream.ReadWrite deuumyMerkleRef
+                Merkle = stream.ReadWrite dummyMerkleRef
                 HogEx = stream.ReadWrite dummyHogExRef
                 MwebHeader = MwebBlockHeader.Read stream
             }
@@ -935,3 +938,66 @@ module MwebP2P =
                 BlockHash = ReadUint256 stream
                 Leafset = ReadByteArray stream
             }
+
+    type MwebHeaderPayload() =
+        inherit Payload()
+        let mutable header : Option<HogExAndMwebHeader> = None
+
+        member self.Header = header.Value
+
+        override self.Command = "mwebheader"
+
+        override self.ReadWriteCore(stream) =
+            if stream.Serializing then
+                Write stream header.Value
+            else
+                header <- Some(HogExAndMwebHeader.Read stream)
+
+    type MwebLeafsetPayload() =
+        inherit Payload()
+        let mutable leafset : Option<MwebLeafset> = None
+
+        member self.Leafset = leafset.Value
+
+        override self.Command = "mwebleafset"
+
+        override self.ReadWriteCore(stream) =
+            if stream.Serializing then
+                Write stream leafset.Value
+            else
+                leafset <- Some(MwebLeafset.Read stream)
+
+    type GetMwebUtxosPayload(request: MwebUtxosRequest) =
+        inherit Payload()
+
+        member self.Request = request
+
+        override self.Command = "getmwebutxos"
+
+        override self.ReadWriteCore(stream) =
+            if stream.Serializing then
+                Write stream request
+            else
+                failwith "not supported"
+
+    type MwebUtxosPayload() =
+        inherit Payload()
+        let mutable mwebUtxos : Option<ISerializeable> = None
+
+        member self.GetMwebUtxos<'TMwebUtxo when 'TMwebUtxo :> ISerializeable>() : MwebUtxos<'TMwebUtxo> = 
+            mwebUtxos.Value :?> MwebUtxos<'TMwebUtxo>
+
+        override self.Command = "mwebutxos"
+
+        override self.ReadWriteCore(stream) =
+            if stream.Serializing then
+                Write stream mwebUtxos.Value
+            else
+                let format = stream.ReadWrite 0uy |> int32 |> enum<MwebOutputFromat>
+                let utxos =
+                    match format with
+                    | MwebOutputFromat.FULL_UTXO -> MwebUtxos<Output>.Read stream Output.Read :> ISerializeable
+                    | MwebOutputFromat.HASH_ONLY -> MwebUtxos<Hash>.Read stream Hash.Read :> ISerializeable
+                    | MwebOutputFromat.COMPACT_UTXO -> MwebUtxos<CompactUtxo>.Read stream CompactUtxo.Read :> ISerializeable
+                    | _ -> failwithf "Incorrect MWEB output serialization format: %A" format
+                mwebUtxos <- Some utxos

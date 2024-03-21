@@ -226,6 +226,13 @@ and LitecoinConsensusFactory private() =
     override self.CreateBlockHeader() = LitecoinBlockHeader()
     override self.CreateBlock() = LitecoinBlock(LitecoinBlockHeader())
 
+    override self.CreatePayload(command) =
+        match command with
+        | "mwebheader" -> MimbleWimble.MwebP2P.MwebHeaderPayload()
+        | "mwebleafset" -> MimbleWimble.MwebP2P.MwebLeafsetPayload()
+        | "mwebutxos" -> MimbleWimble.MwebP2P.MwebUtxosPayload()
+        | _ -> base.CreatePayload command
+
 type Litecoin private() =
     inherit NetworkSetBase()
 
