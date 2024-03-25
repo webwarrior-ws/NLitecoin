@@ -984,17 +984,21 @@ module MwebP2P =
     type MwebLeafset =
         {
             BlockHash: uint256
-            Leafset: array<uint8>
+            /// Serialized in big-endian form
+            Leafset: Collections.BitArray
         }
         interface ISerializeable with
             member self.Write stream = 
                 self.BlockHash |> WriteUint256 stream
-                self.Leafset |> WriteByteArray stream
+                let numBitsInByte = 8
+                let bytes = Array.zeroCreate ((self.Leafset.Count - 1) / numBitsInByte + 1)
+                self.Leafset.CopyTo(bytes, 0)
+                bytes |> Array.rev |> WriteByteArray stream
 
         static member Read(stream: BitcoinStream) : MwebLeafset =
             {
                 BlockHash = ReadUint256 stream
-                Leafset = ReadByteArray stream
+                Leafset = ReadByteArray stream |> Array.rev |> Collections.BitArray
             }
 
     type MwebHeaderPayload() =
