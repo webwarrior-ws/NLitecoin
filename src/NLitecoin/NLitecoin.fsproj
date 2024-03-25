@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <Compile Include="MimbleWimble\Types.fs" />
+    <Compile Include="MimbleWimble\MwebP2P.fs" />
     <Compile Include="MimbleWimble\EC.fs" />
     <Compile Include="MimbleWimble\Pedersen.fs" />
     <Compile Include="MimbleWimble\Bulletproof.fs" />
