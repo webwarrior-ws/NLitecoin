@@ -44,9 +44,7 @@ let private CreateInput (outputId: Hash) (commitment: PedersenCommitment) (input
     msgHasher.Append outputId
     let msgHash = msgHasher.Hash().ToBytes()
 
-    let schnorrSignature =
-        // is this the right one?
-        NBitcoin.Secp256k1.ECPrivKey.Create(sigKey.ToByteArrayUnsigned()).SignBIP340(msgHash)
+    let schnorrSignature = EC.SchnorrSign (sigKey.ToByteArrayUnsigned()) msgHash
         
     {
         Features = features
@@ -54,7 +52,7 @@ let private CreateInput (outputId: Hash) (commitment: PedersenCommitment) (input
         Commitment = commitment
         InputPublicKey = Some inputPubKey
         OutputPublicKey = outputPubKey
-        Signature = Signature(schnorrSignature.ToBytes() |> BigInt)
+        Signature = schnorrSignature
         ExtraData = Array.empty
     }
 
@@ -156,7 +154,47 @@ let private CreateOutput (senderPrivKey: uint256) (receiverAddr: StealthAddress)
                 ExtraData = Array.empty
             }
 
-        failwith "not implemented"
+        let rangeProof = 
+            let emptyProofMessage = Array.zeroCreate 20
+            
+            let messageSerialized =
+                use memoryStream = new System.IO.MemoryStream()
+                let stream = new BitcoinStream(memoryStream, true)
+                (message :> ISerializeable).Write stream
+                memoryStream.ToArray()
+
+            Bulletproof.ConstructRangeProof 
+                value 
+                (blind.ToUInt256()) 
+                (NBitcoin.RandomUtils.GetUInt256())
+                (NBitcoin.RandomUtils.GetUInt256())
+                emptyProofMessage
+                (Some messageSerialized)
+        
+        // Sign the output
+        let signature =
+            let hasher = Hasher()
+            hasher.Append outputCommit
+            hasher.Write (Ks.ToBytes true) // ?
+            hasher.Write (Ko.ToByteArrayUnsigned())
+            hasher.Write (Hasher.CalculateHash(message).ToBytes())
+            hasher.Write (Hasher.CalculateHash(rangeProof).ToBytes())
+            let sigMessage = hasher.Hash()
+            EC.SchnorrSign (senderPrivKey.ToBytes()) (sigMessage.ToBytes())
+
+        let blindOut = mask.PreBlind
+        
+        let output = 
+            {
+                Commitment = outputCommit
+                SenderPublicKey = PublicKey(Ks.ToBytes(true) |> BigInt)
+                ReceiverPublicKey = PublicKey(Ko.ToByteArrayUnsigned() |> BigInt)
+                Message = message
+                RangeProof = rangeProof
+                Signature = signature
+            }
+        
+        output, blindOut
 
 let private CreateOutputs (recipients: seq<Recipient>) : Outputs =
     let outputBlinds, outputs, coins = 
