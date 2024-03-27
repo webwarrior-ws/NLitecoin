@@ -21,40 +21,57 @@ type IUtxo =
 
     abstract member LeafIndex: uint64
 
-type FullUtxo(leafIndex: uint64, output: Output) =
+type FullUtxo =
+    {
+        LeafIndex: uint64
+        Output: Output
+    }
     interface IUtxo with
         member self.Write stream = 
-            VarInt.StaticWrite(stream, leafIndex)
-            (output :> ISerializeable).Write stream
+            VarInt.StaticWrite(stream, self.LeafIndex)
+            (self.Output :> ISerializeable).Write stream
             
         member self.GetOutputID() =
-            output.GetOutputID()
+            self.Output.GetOutputID()
 
-        member self.LeafIndex = leafIndex
+        member self.LeafIndex = self.LeafIndex
 
     static member Read(stream: BitcoinStream) : FullUtxo =
-        let leafIndex = VarInt.StaticRead stream
-        let output = Output.Read stream
-        FullUtxo(leafIndex, output)
+        { 
+            FullUtxo.LeafIndex = VarInt.StaticRead stream
+            Output = Output.Read stream
+        }
 
 /// Same as FullUtxo, but Output stores RangeProof hash instead of RangeProof itself
-type CompactUtxo(leafIndex: uint64, output: Output) =
+type CompactUtxo =
+    {
+        LeafIndex: uint64
+        Output: Output
+    }
     interface IUtxo with
         member self.Write stream = 
-            VarInt.StaticWrite(stream, leafIndex)
-            (output :> ISerializeable).Write stream
+            VarInt.StaticWrite(stream, self.LeafIndex)
+            Write stream self.Output.Commitment
+            Write stream self.Output.SenderPublicKey
+            Write stream self.Output.ReceiverPublicKey
+            Write stream self.Output.Message
+            let rangeProofHash = 
+                match self.Output.RangeProof with
+                | RangeProof hashBytes -> Hash.Hash(uint256 hashBytes)
+            Write stream rangeProofHash
+            Write stream self.Output.Signature
             
         member self.GetOutputID() : Hash =
             let hasher = Hasher()
-            hasher.Append output.Commitment
-            hasher.Append output.SenderPublicKey
-            hasher.Append output.ReceiverPublicKey
-            hasher.Append(Hasher.CalculateHash output.Message)
-            hasher.Append output.RangeProof
-            hasher.Append output.Signature
+            hasher.Append self.Output.Commitment
+            hasher.Append self.Output.SenderPublicKey
+            hasher.Append self.Output.ReceiverPublicKey
+            hasher.Append(Hasher.CalculateHash self.Output.Message)
+            hasher.Append self.Output.RangeProof
+            hasher.Append self.Output.Signature
             hasher.Hash()
 
-        member self.LeafIndex = leafIndex
+        member self.LeafIndex = self.LeafIndex
 
     static member Read(stream: BitcoinStream) : CompactUtxo =
         BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
@@ -68,22 +85,27 @@ type CompactUtxo(leafIndex: uint64, output: Output) =
                 RangeProof = RangeProof.RangeProof <| (Hash.Read stream).ToBytes()
                 Signature = Signature.Read stream
             }
-        CompactUtxo(leafIndex, output)
+        { CompactUtxo.LeafIndex = leafIndex; Output = output }
 
-type HashOnlyUtxo(leafIndex: uint64, hash: Hash) =
+type HashOnlyUtxo =
+    {
+        LeafIndex: uint64
+        Hash: Hash
+    }
     interface IUtxo with
         member self.Write stream = 
-            VarInt.StaticWrite(stream, leafIndex)
-            (hash :> ISerializeable).Write stream
+            VarInt.StaticWrite(stream, self.LeafIndex)
+            (self.Hash :> ISerializeable).Write stream
 
-        member self.GetOutputID() = hash
+        member self.GetOutputID() = self.Hash
 
-        member self.LeafIndex = leafIndex
+        member self.LeafIndex = self.LeafIndex
 
     static member Read(stream: BitcoinStream) : HashOnlyUtxo =
-        let leafIndex = VarInt.StaticRead stream
-        let hash = Hash.Read stream
-        HashOnlyUtxo(leafIndex, hash)
+        { 
+            LeafIndex = VarInt.StaticRead stream
+            Hash = Hash.Read stream
+        }
     
 type MwebOutputFromat =
     | FULL_UTXO = 0x00
@@ -143,9 +165,9 @@ type MwebUtxos<'TMwebUtxo when 'TMwebUtxo :> IUtxo> =
         }
 
     static member OutputFormat : MwebOutputFromat =
-        if typeof<'TMwebUtxo> = typeof<Output> then
+        if typeof<'TMwebUtxo> = typeof<FullUtxo> then
             MwebOutputFromat.FULL_UTXO 
-        elif typeof<'TMwebUtxo> = typeof<Hash> then
+        elif typeof<'TMwebUtxo> = typeof<HashOnlyUtxo> then
             MwebOutputFromat.HASH_ONLY
         elif typeof<'TMwebUtxo> = typeof<CompactUtxo> then
             MwebOutputFromat.COMPACT_UTXO
@@ -168,6 +190,7 @@ type HogExAndMwebHeader =
 
     static member Read(stream: BitcoinStream) : HogExAndMwebHeader =
         BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
+
         let dummyMerkleRef : MerkleBlock = null
         let dummyHogExRef : NBitcoin.Transaction = null
         {
@@ -176,6 +199,7 @@ type HogExAndMwebHeader =
             MwebHeader = MwebBlockHeader.Read stream
         }
     
+[<CustomEquality; NoComparison>]
 type MwebLeafset =
     {
         BlockHash: uint256
@@ -189,6 +213,25 @@ type MwebLeafset =
             let bytes = Array.zeroCreate ((self.Leafset.Count - 1) / numBitsInByte + 1)
             self.Leafset.CopyTo(bytes, 0)
             bytes |> Array.rev |> WriteByteArray stream
+    
+    interface IEquatable<MwebLeafset> with
+        override self.Equals(other) =
+            self.BlockHash = other.BlockHash 
+                && self.Leafset.Count = other.Leafset.Count
+                && Seq.forall (fun i -> self.Leafset.[i] = other.Leafset.[i]) (Seq.init self.Leafset.Count id)
+
+    override self.Equals(other) =
+        match other with
+        | :? MwebLeafset as otherLeafset -> (self :> IEquatable<MwebLeafset>).Equals otherLeafset
+        | _ -> false
+
+    override self.GetHashCode() =
+        let leafsetHashCode =
+            Seq.fold 
+                (fun acc i -> acc ^^^ self.Leafset.[i].GetHashCode()) 
+                0 
+                (Seq.init self.Leafset.Count id)
+        leafsetHashCode ^^^ self.BlockHash.GetHashCode()
 
     static member Read(stream: BitcoinStream) : MwebLeafset =
         {

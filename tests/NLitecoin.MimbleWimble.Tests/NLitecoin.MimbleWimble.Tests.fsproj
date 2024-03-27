@@ -29,6 +29,7 @@
     <Compile Include="ZKPTests.fs" />
     <Compile Include="TransactionBuilderTests.fs" />
     <Compile Include="WalletTests.fs" />
+    <Compile Include="MbewP2PTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
