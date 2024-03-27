@@ -479,6 +479,13 @@ type OutputMask =
             self.NonceMask.Data
         |> BigInt
 
+/// Interface that exposes data needed for rewinding an output
+type IOutput =
+    abstract Message: OutputMessage
+    abstract Commitment: PedersenCommitment
+    abstract ReceiverPublicKey: PublicKey
+    abstract GetOutputID : unit -> Hash
+
 [<CustomComparison; StructuralEquality>]
 type Output =
     {
@@ -520,6 +527,12 @@ type Output =
             match other with
             | :? Output as output -> (self :> IComparable<Output>).CompareTo output
             | _ -> 0
+    
+    interface IOutput with
+        member self.Message = self.Message
+        member self.Commitment = self.Commitment
+        member self.ReceiverPublicKey = self.ReceiverPublicKey
+        member self.GetOutputID() = self.GetOutputID()
 
     member self.GetOutputID() : Hash =
         let hasher = Hasher()

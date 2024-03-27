@@ -15,14 +15,14 @@ type MutableDictionary<'K,'V> = Collections.Generic.Dictionary<'K,'V>
 
 type IKeyChain =
     abstract GetStealthAddress: uint32 -> StealthAddress
-    abstract RewindOutput: Output -> Option<Coin>
+    abstract RewindOutput: IOutput -> Option<Coin>
     abstract PrivateScanKey: Key
 
 let RewindOutput 
     (keyChain: IKeyChain) 
     (getIndexForSpendKey: Secp256k1.ECPubKey -> Option<uint32>) 
     (calculateOutputKey: uint256 -> uint32 -> Option<uint256>)
-    (output: Output) : Option<Coin> =
+    (output: IOutput) : Option<Coin> =
     match output.Message.StandardFields with
     | None -> None
     | Some outputFields ->
@@ -161,7 +161,7 @@ type KeyChain(seed: array<byte>, maxUsedIndex: uint32) =
             spendPubKeysMap.[spendKey] <- index
             spendKey
 
-    member self.RewindOutput(output: Output) : Option<Coin> =
+    member self.RewindOutput(output: IOutput) : Option<Coin> =
         RewindOutput self self.GetIndexForSpendKey self.CalculateOutputKey output
 
     member private self.CalculateOutputKey (sharedSecret: uint256) (addressIndex: uint32) : Option<uint256> =
@@ -222,7 +222,7 @@ type Wallet(keyChain: IKeyChain, coins: Map<Hash, Coin>, spentOutputs: Set<Hash>
     member self.GetBalance() : Amount =
         self.GetUnspentCoins() |> Array.sumBy (fun coin -> coin.Amount)
 
-    member self.RewindOutput(output: Output) : Wallet * Option<Coin> =
+    member self.RewindOutput(output: IOutput) : Wallet * Option<Coin> =
         match self.GetCoin(output.GetOutputID()) with
         | Some coin when coin.IsMine -> 
             // If the coin has the spend key, it's fully rewound. If not, try rewinding further.

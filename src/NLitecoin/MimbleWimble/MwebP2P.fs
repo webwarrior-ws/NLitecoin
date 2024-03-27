@@ -61,17 +61,25 @@ type CompactUtxo =
             Write stream rangeProofHash
             Write stream self.Output.Signature
             
-        member self.GetOutputID() : Hash =
-            let hasher = Hasher()
-            hasher.Append self.Output.Commitment
-            hasher.Append self.Output.SenderPublicKey
-            hasher.Append self.Output.ReceiverPublicKey
-            hasher.Append(Hasher.CalculateHash self.Output.Message)
-            hasher.Append self.Output.RangeProof
-            hasher.Append self.Output.Signature
-            hasher.Hash()
+        member self.GetOutputID() = self.GetOutputID()
 
         member self.LeafIndex = self.LeafIndex
+        
+    interface IOutput with
+        member self.Message = self.Output.Message
+        member self.Commitment = self.Output.Commitment
+        member self.ReceiverPublicKey = self.Output.ReceiverPublicKey
+        member self.GetOutputID() = self.GetOutputID()
+
+    member self.GetOutputID() : Hash =
+        let hasher = Hasher()
+        hasher.Append self.Output.Commitment
+        hasher.Append self.Output.SenderPublicKey
+        hasher.Append self.Output.ReceiverPublicKey
+        hasher.Append(Hasher.CalculateHash self.Output.Message)
+        hasher.Append self.Output.RangeProof
+        hasher.Append self.Output.Signature
+        hasher.Hash()
 
     static member Read(stream: BitcoinStream) : CompactUtxo =
         BetterAssert (not stream.Serializing) "stream.Serializing should be false when reading"
